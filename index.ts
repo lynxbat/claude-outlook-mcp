@@ -89,7 +89,7 @@ const OUTLOOK_MAIL_TOOL: Tool = {
       },
       messageId: {
         type: "string",
-        description: "Email message ID (required for move_email and forward operations)"
+        description: "Email message ID (required for move_email, forward, and reply operations)"
       },
       forwardTo: {
         type: "string",
@@ -534,31 +534,8 @@ async function searchEmails(searchTerm: string, folder: string = "Inbox", limit:
       throw new Error(result);
     }
 
-    if (!result || result.trim() === "") {
-      return [];
-    }
-
-    // Parse messages using delimiters
-    const emails: any[] = [];
-    const messageBlocks = result.split("<<<MSG>>>").filter(b => b.trim());
-
-    for (const block of messageBlocks) {
-      const subjectMatch = block.match(/^(.*)<<<ID>>>/s);
-      const idMatch = block.match(/<<<ID>>>(.*)<<<FROM>>>/s);
-      const senderMatch = block.match(/<<<FROM>>>(.*)<<<DATE>>>/s);
-      const dateMatch = block.match(/<<<DATE>>>(.*)<<<CONTENT>>>/s);
-      const contentMatch = block.match(/<<<CONTENT>>>(.*)<<<ENDMSG>>>/s);
-
-      if (subjectMatch) {
-        emails.push({
-          messageId: idMatch ? idMatch[1].trim() : undefined,
-          subject: subjectMatch[1].trim() || "No subject",
-          sender: senderMatch ? senderMatch[1].trim() : "Unknown sender",
-          dateSent: dateMatch ? dateMatch[1].trim() : new Date().toString(),
-          content: contentMatch ? contentMatch[1].trim() : "[Content not available]"
-        });
-      }
-    }
+    // Parse messages using helper function
+    const emails = parseEmailOutput(result);
 
     console.error(`[searchEmails] Found ${emails.length} matching emails`);
     return emails;
@@ -1421,31 +1398,8 @@ async function readEmails(folder: string = "Inbox", limit: number = 10, startDat
         throw new Error(result);
       }
 
-      if (!result || result.trim() === "") {
-        return [];
-      }
-
-      // Parse messages
-      const emails: any[] = [];
-      const messageBlocks = result.split("<<<MSG>>>").filter(b => b.trim());
-
-      for (const block of messageBlocks) {
-        const subjectMatch = block.match(/^(.*)<<<ID>>>/s);
-        const idMatch = block.match(/<<<ID>>>(.*)<<<FROM>>>/s);
-        const senderMatch = block.match(/<<<FROM>>>(.*)<<<DATE>>>/s);
-        const dateMatch = block.match(/<<<DATE>>>(.*)<<<CONTENT>>>/s);
-        const contentMatch = block.match(/<<<CONTENT>>>(.*)<<<ENDMSG>>>/s);
-
-        if (subjectMatch) {
-          emails.push({
-            messageId: idMatch ? idMatch[1].trim() : undefined,
-            subject: subjectMatch[1].trim() || "No subject",
-            sender: senderMatch ? senderMatch[1].trim() : "Unknown sender",
-            dateSent: dateMatch ? dateMatch[1].trim() : new Date().toString(),
-            content: contentMatch ? contentMatch[1].trim() : "[Content not available]"
-          });
-        }
-      }
+      // Parse messages using helper function
+      const emails = parseEmailOutput(result);
 
       console.error(`[readEmails] Successfully parsed ${emails.length} emails from ${folder}`);
       return emails;
