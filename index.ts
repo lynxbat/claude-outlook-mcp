@@ -476,12 +476,8 @@ async function searchEmails(searchTerm: string, folder: string = "Inbox", limit:
               end try
             end try
 
-            -- Check if search term is in subject or content (case insensitive)
-            set lcSubject to do shell script "echo " & quoted form of msgSubject & " | tr '[:upper:]' '[:lower:]'"
-            set lcContent to do shell script "echo " & quoted form of msgContent & " | tr '[:upper:]' '[:lower:]'"
-            set lcSearch to do shell script "echo " & quoted form of searchString & " | tr '[:upper:]' '[:lower:]'"
-
-            if (lcSubject contains lcSearch) or (lcContent contains lcSearch) then
+            -- Check if search term is in subject or content (AppleScript 'contains' is case-insensitive)
+            if (msgSubject contains searchString) or (msgContent contains searchString) then
               -- Get message ID
               set msgId to id of theMsg as string
 
@@ -1041,7 +1037,7 @@ async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: st
     tell application "Microsoft Outlook"
       try
         set theMsg to message id ${messageId}
-        set fwdMsg to forward theMsg with opening window
+        set fwdMsg to forward theMsg without opening window
 
         -- Add recipient
         tell fwdMsg
