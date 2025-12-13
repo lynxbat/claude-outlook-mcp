@@ -1081,8 +1081,8 @@ async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: st
 }
 
 // Function to reply to an email (preserves thread)
-async function replyEmail(messageId: string, replyBody: string, replyAll: boolean = false, attachments?: string[]): Promise<string> {
-  console.error(`[replyEmail] Replying to message ${messageId}, replyAll: ${replyAll}`);
+async function replyEmail(messageId: string, replyBody: string, replyAll: boolean = false, isHtml: boolean = false, attachments?: string[]): Promise<string> {
+  console.error(`[replyEmail] Replying to message ${messageId}, replyAll: ${replyAll}, isHtml: ${isHtml}`);
   console.error(`[replyEmail] Attachments: ${attachments ? JSON.stringify(attachments) : 'none'}`);
   await checkOutlookAccess();
 
@@ -1123,9 +1123,14 @@ async function replyEmail(messageId: string, replyBody: string, replyAll: boolea
         set theMsg to message id ${messageId}
         set replyMsg to ${replyCommand} without opening window
 
-        -- Set the reply content as plain text (prepend to existing quoted content)
+        -- Set the reply content (prepend to existing quoted content)
+        ${isHtml ? `
+        set currentContent to content of replyMsg
+        set content of replyMsg to "${escapedBody}" & "<br><br>" & currentContent
+        ` : `
         set currentContent to plain text content of replyMsg
         set plain text content of replyMsg to "${escapedBody}" & return & return & currentContent
+        `}
 
         -- Add attachments if provided
         ${attachmentScript}
@@ -2553,7 +2558,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (!args.messageId || !args.replyBody) {
               throw new Error("Message ID and replyBody are required for reply operation");
             }
-            const result = await replyEmail(args.messageId, args.replyBody, args.replyAll || false, args.attachments);
+            const result = await replyEmail(args.messageId, args.replyBody, args.replyAll || false, args.isHtml || false, args.attachments);
             return {
               content: [{ type: "text", text: result }],
               isError: result.startsWith("Error:")
