@@ -7,6 +7,10 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { runAppleScript } from 'run-applescript';
+import { buildFolderRef, buildNestedFolderRef, escapeForAppleScript } from './helpers';
+
+// Re-export helpers for testing
+export { buildFolderRef, buildNestedFolderRef, escapeForAppleScript } from './helpers';
 
 // ====================================================
 // 1. Tool Definitions
@@ -21,8 +25,8 @@ const OUTLOOK_MAIL_TOOL: Tool = {
     properties: {
       operation: {
         type: "string",
-        description: "Operation to perform: 'unread', 'search', 'send', 'folders', or 'read'",
-        enum: ["unread", "search", "send", "folders", "read"]
+        description: "Operation to perform: 'unread', 'search', 'send', 'folders', 'read', 'create_folder', 'move_email', 'rename_folder', or 'delete_folder'",
+        enum: ["unread", "search", "send", "folders", "read", "create_folder", "move_email", "rename_folder", "delete_folder"]
       },
       folder: {
         type: "string",
@@ -66,6 +70,27 @@ const OUTLOOK_MAIL_TOOL: Tool = {
         items: {
           type: "string"
         }
+      },
+      // Folder management parameters
+      name: {
+        type: "string",
+        description: "Folder name to create (required for create_folder operation)"
+      },
+      parent: {
+        type: "string",
+        description: "Parent folder path for nesting (optional for create_folder operation, e.g., 'Work' or 'Work/Projects')"
+      },
+      messageId: {
+        type: "string",
+        description: "Email message ID (required for move_email operation)"
+      },
+      targetFolder: {
+        type: "string",
+        description: "Destination folder path (required for move_email operation, e.g., 'Archive' or 'Work/Completed')"
+      },
+      newName: {
+        type: "string",
+        description: "New folder name (required for rename_folder operation)"
       }
     },
     required: ["operation"]
@@ -838,7 +863,169 @@ async function readEmails(folder: string = "Inbox", limit: number = 10): Promise
   }
 
 // ====================================================
-// 5. CALENDAR FUNCTIONS
+// 5. FOLDER MANAGEMENT FUNCTIONS
+// ====================================================
+
+/**
+ * Create a new mail folder in Outlook
+ * @param name - Name for the new folder
+ * @param parent - Optional parent folder path (e.g., "Work" or "Work/Projects")
+ * @returns Success or error message
+ *
+ * Examples:
+ * - createFolder("Archive") - Creates top-level "Archive" folder
+ * - createFolder("Reports", "Work") - Creates "Reports" under "Work"
+ */
+async function createFolder(name: string, parent?: string): Promise<string> {
+  console.error(`[createFolder] Creating folder: ${name}${parent ? ` under ${parent}` : ''}`);
+  await checkOutlookAccess();
+
+  // Build AppleScript to create folder
+  let script: string;
+
+  if (parent) {
+    // Create nested folder using helper for proper path resolution
+    const parentRef = buildNestedFolderRef(parent);
+    script = `
+      tell application "Microsoft Outlook"
+        try
+          set parentFolder to ${parentRef}
+          set newFolder to make new mail folder at parentFolder with properties {name:"${escapeForAppleScript(name)}"}
+          return "Created folder: ${name} under ${parent}"
+        on error errMsg
+          return "Error: " & errMsg
+        end try
+      end tell
+    `;
+  } else {
+    // Create top-level folder
+    script = `
+      tell application "Microsoft Outlook"
+        try
+          set newFolder to make new mail folder with properties {name:"${escapeForAppleScript(name)}"}
+          return "Created folder: ${name}"
+        on error errMsg
+          return "Error: " & errMsg
+        end try
+      end tell
+    `;
+  }
+
+  try {
+    const result = await runAppleScript(script);
+    console.error(`[createFolder] Result: ${result}`);
+    return result;
+  } catch (error) {
+    console.error("[createFolder] Error creating folder:", error);
+    throw error;
+  }
+}
+
+/**
+ * Move an email to a different folder
+ * @param messageId - The ID of the email message to move
+ * @param targetFolder - Destination folder path (e.g., "Archive" or "Work/Completed")
+ * @returns Success or error message
+ */
+async function moveEmail(messageId: string, targetFolder: string): Promise<string> {
+  console.error(`[moveEmail] Moving message ${messageId} to folder: ${targetFolder}`);
+  await checkOutlookAccess();
+
+  const folderRef = buildNestedFolderRef(targetFolder);
+
+  const script = `
+    tell application "Microsoft Outlook"
+      try
+        set theMsg to message id ${messageId}
+        set destFolder to ${folderRef}
+        move theMsg to destFolder
+        return "Moved message to ${targetFolder}"
+      on error errMsg
+        return "Error: " & errMsg
+      end try
+    end tell
+  `;
+
+  try {
+    const result = await runAppleScript(script);
+    console.error(`[moveEmail] Result: ${result}`);
+    return result;
+  } catch (error) {
+    console.error("[moveEmail] Error moving email:", error);
+    throw error;
+  }
+}
+
+/**
+ * Rename an existing mail folder
+ * @param folder - Current folder path (e.g., "OldName" or "Work/OldName")
+ * @param newName - New name for the folder
+ * @returns Success or error message
+ */
+async function renameFolder(folder: string, newName: string): Promise<string> {
+  console.error(`[renameFolder] Renaming folder: ${folder} to ${newName}`);
+  await checkOutlookAccess();
+
+  const folderRef = buildNestedFolderRef(folder);
+
+  const script = `
+    tell application "Microsoft Outlook"
+      try
+        set theFolder to ${folderRef}
+        set name of theFolder to "${escapeForAppleScript(newName)}"
+        return "Renamed folder to: ${newName}"
+      on error errMsg
+        return "Error: " & errMsg
+      end try
+    end tell
+  `;
+
+  try {
+    const result = await runAppleScript(script);
+    console.error(`[renameFolder] Result: ${result}`);
+    return result;
+  } catch (error) {
+    console.error("[renameFolder] Error renaming folder:", error);
+    throw error;
+  }
+}
+
+/**
+ * Delete a mail folder
+ * WARNING: This permanently deletes the folder and all emails in it
+ * @param folder - Folder path to delete (e.g., "TempFolder" or "Work/OldProject")
+ * @returns Success or error message
+ */
+async function deleteFolder(folder: string): Promise<string> {
+  console.error(`[deleteFolder] Deleting folder: ${folder}`);
+  await checkOutlookAccess();
+
+  const folderRef = buildNestedFolderRef(folder);
+
+  const script = `
+    tell application "Microsoft Outlook"
+      try
+        set theFolder to ${folderRef}
+        delete theFolder
+        return "Deleted folder: ${folder}"
+      on error errMsg
+        return "Error: " & errMsg
+      end try
+    end tell
+  `;
+
+  try {
+    const result = await runAppleScript(script);
+    console.error(`[deleteFolder] Result: ${result}`);
+    return result;
+  } catch (error) {
+    console.error("[deleteFolder] Error deleting folder:", error);
+    throw error;
+  }
+}
+
+// ====================================================
+// 6. CALENDAR FUNCTIONS
 // ====================================================
 
 // Function to get today's calendar events
@@ -1650,11 +1837,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           case "read": {
             const emails = await readEmails(args.folder, args.limit);
             return {
-              content: [{ 
-                type: "text", 
-                text: emails.length > 0 ? 
+              content: [{
+                type: "text",
+                text: emails.length > 0 ?
                   `Found ${emails.length} email(s)${args.folder ? ` in folder "${args.folder}"` : ''}\n\n` +
-                  emails.map(email => 
+                  emails.map(email =>
                     `[${email.dateSent}] From: ${email.sender}\nSubject: ${email.subject}\n${email.content.substring(0, 200)}${email.content.length > 200 ? '...' : ''}`
                   ).join("\n\n") :
                   `No emails found${args.folder ? ` in folder "${args.folder}"` : ''}`
@@ -1662,7 +1849,53 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               isError: false
             };
           }
-          
+
+          // ========== FOLDER MANAGEMENT OPERATIONS ==========
+
+          case "create_folder": {
+            if (!args.name) {
+              throw new Error("Missing required parameter: name");
+            }
+            const result = await createFolder(args.name, args.parent);
+            return {
+              content: [{ type: "text", text: result }],
+              isError: result.startsWith("Error:")
+            };
+          }
+
+          case "move_email": {
+            if (!args.messageId || !args.targetFolder) {
+              throw new Error("Missing required parameters: messageId and targetFolder");
+            }
+            const result = await moveEmail(args.messageId, args.targetFolder);
+            return {
+              content: [{ type: "text", text: result }],
+              isError: result.startsWith("Error:")
+            };
+          }
+
+          case "rename_folder": {
+            if (!args.folder || !args.newName) {
+              throw new Error("Missing required parameters: folder and newName");
+            }
+            const result = await renameFolder(args.folder, args.newName);
+            return {
+              content: [{ type: "text", text: result }],
+              isError: result.startsWith("Error:")
+            };
+          }
+
+          case "delete_folder": {
+            if (!args.folder) {
+              throw new Error("Missing required parameter: folder");
+            }
+            const result = await deleteFolder(args.folder);
+            return {
+              content: [{ type: "text", text: result }],
+              isError: result.startsWith("Error:")
+            };
+          }
+
           default:
             throw new Error(`Unknown mail operation: ${operation}`);
         }
