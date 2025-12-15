@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
 import { ensureOutlookRunning, TEST_TIMEOUT } from "../setup";
-import { getMailFolders, createFolder, renameFolder, deleteFolder } from "../../index";
+import { getMailFolders, createFolder, renameFolder, deleteFolder, listFolders } from "../../index";
 
 describe("getMailFolders", () => {
   beforeAll(async () => {
@@ -103,5 +103,95 @@ describe("folder management", () => {
   it("returns error when deleting non-existent folder", async () => {
     const result = await deleteFolder("_NonExistent_Folder_12345");
     expect(result).toContain("Error");
+  }, TEST_TIMEOUT);
+});
+
+describe("listFolders", () => {
+  beforeAll(async () => {
+    await ensureOutlookRunning();
+  });
+
+  it("returns array of folder objects", async () => {
+    const folders = await listFolders();
+
+    expect(Array.isArray(folders)).toBe(true);
+    expect(folders.length).toBeGreaterThan(0);
+
+    // Each folder should have required properties
+    const folder = folders[0];
+    expect(Array.isArray(folder.path)).toBe(true);
+    expect(typeof folder.account).toBe("string");
+    expect(folder.specialFolder === null || typeof folder.specialFolder === "string").toBe(true);
+  }, TEST_TIMEOUT);
+
+  it("includes Inbox with specialFolder set", async () => {
+    const folders = await listFolders();
+
+    const inbox = folders.find(f =>
+      f.path.length === 1 &&
+      f.path[0].toLowerCase() === "inbox"
+    );
+
+    expect(inbox).toBeDefined();
+    expect(inbox?.specialFolder).toBe("inbox");
+  }, TEST_TIMEOUT);
+
+  it("returns nested folder paths as arrays", async () => {
+    // Create a nested test folder
+    await createFolder("_ListTest");
+    await createFolder("_ListTestSub", "_ListTest");
+
+    const folders = await listFolders({ excludeDeleted: false });
+
+    const nestedFolder = folders.find(f =>
+      f.path.length === 2 &&
+      f.path[0] === "_ListTest" &&
+      f.path[1] === "_ListTestSub"
+    );
+
+    expect(nestedFolder).toBeDefined();
+
+    // Cleanup
+    await deleteFolder("_ListTest/_ListTestSub");
+    await deleteFolder("_ListTest");
+  }, TEST_TIMEOUT);
+
+  it("excludes deleted folders by default", async () => {
+    const folders = await listFolders();
+
+    // Should not have any folder paths starting with Deleted Items
+    const deletedFolders = folders.filter(f =>
+      f.path[0]?.toLowerCase().includes("deleted")
+    );
+
+    // Deleted Items itself should still appear, but not its children
+    const deletedChildren = folders.filter(f =>
+      f.path.length > 1 &&
+      f.path[0]?.toLowerCase().includes("deleted")
+    );
+
+    expect(deletedChildren.length).toBe(0);
+  }, TEST_TIMEOUT);
+
+  it("includes deleted folders when excludeDeleted is false", async () => {
+    const folders = await listFolders({ excludeDeleted: false });
+
+    // This just verifies the parameter is accepted
+    expect(Array.isArray(folders)).toBe(true);
+  }, TEST_TIMEOUT);
+
+  it("includes counts when includeCounts is true", async () => {
+    const folders = await listFolders({ includeCounts: true });
+
+    expect(folders.length).toBeGreaterThan(0);
+
+    const inbox = folders.find(f =>
+      f.path.length === 1 &&
+      f.path[0].toLowerCase() === "inbox"
+    );
+
+    expect(inbox).toBeDefined();
+    expect(typeof inbox?.count).toBe("number");
+    expect(typeof inbox?.unreadCount).toBe("number");
   }, TEST_TIMEOUT);
 });

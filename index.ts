@@ -12,6 +12,15 @@ import { parseEmailOutput, buildFolderRef, buildNestedFolderRef, escapeForAppleS
 // Re-export helpers for testing
 export { parseEmailOutput, buildFolderRef, buildNestedFolderRef, escapeForAppleScript } from './helpers';
 
+// Folder info type for list_folders operation
+interface FolderInfo {
+  path: string[];
+  account: string;
+  specialFolder: string | null;
+  count?: number;
+  unreadCount?: number;
+}
+
 // ====================================================
 // 1. Tool Definitions
 // ====================================================
@@ -25,8 +34,8 @@ const OUTLOOK_MAIL_TOOL: Tool = {
     properties: {
       operation: {
         type: "string",
-        description: "Operation to perform: 'unread', 'search', 'send', 'draft', 'reply', 'forward', 'folders', 'read', 'create_folder', 'move_email', 'rename_folder', 'delete_folder', 'count', or 'save_attachments'",
-        enum: ["unread", "search", "send", "draft", "reply", "forward", "folders", "read", "create_folder", "move_email", "rename_folder", "delete_folder", "count", "save_attachments"]
+        description: "Operation to perform: 'unread', 'search', 'send', 'draft', 'reply', 'forward', 'folders', 'read', 'create_folder', 'move_email', 'rename_folder', 'delete_folder', 'count', 'save_attachments', or 'list_folders'",
+        enum: ["unread", "search", "send", "draft", "reply", "forward", "folders", "read", "create_folder", "move_email", "rename_folder", "delete_folder", "count", "save_attachments", "list_folders"]
       },
       folder: {
         type: "string",
@@ -126,6 +135,18 @@ const OUTLOOK_MAIL_TOOL: Tool = {
       destinationFolder: {
         type: "string",
         description: "Destination folder path to save attachments (required for save_attachments operation)"
+      },
+      includeCounts: {
+        type: "boolean",
+        description: "Include email count and unread count for each folder (slower, default: false)"
+      },
+      excludeDeleted: {
+        type: "boolean",
+        description: "Exclude folders under Deleted Items (default: true)"
+      },
+      account: {
+        type: "string",
+        description: "Filter to specific account email address (optional, returns all accounts if not specified)"
       }
     },
     required: ["operation"]
@@ -904,6 +925,178 @@ async function getMailFolders(): Promise<string[]> {
       throw error;
     }
   }
+
+// Function to list folders with full paths and metadata
+async function listFolders(options: {
+  includeCounts?: boolean;
+  excludeDeleted?: boolean;
+  account?: string;
+} = {}): Promise<FolderInfo[]> {
+  const { includeCounts = false, excludeDeleted = true, account } = options;
+  console.error(`[listFolders] Getting folders with options: includeCounts=${includeCounts}, excludeDeleted=${excludeDeleted}, account=${account || 'all'}`);
+  await checkOutlookAccess();
+
+  // Use iterative approach instead of recursive handler to avoid AppleScript scope issues
+  // We'll process folders level by level, building paths as we go
+  const script = `
+    tell application "Microsoft Outlook"
+      set folderList to {}
+      set accountFilter to "${account || ""}"
+      set excludeDeletedItems to ${excludeDeleted}
+
+      repeat with theAccount in exchange accounts
+        set accountEmail to email address of theAccount
+
+        -- Skip if filtering by account and this isn't it
+        if accountFilter is not "" and accountEmail is not accountFilter then
+          -- skip this account
+        else
+          -- Process each top-level folder using a worklist (iterative approach)
+          set worklist to {}
+
+          -- Initialize worklist with top-level folders
+          repeat with theFolder in mail folders of theAccount
+            set folderName to name of theFolder
+            set end of worklist to {theFolder, {folderName}}
+          end repeat
+
+          -- Process worklist iteratively
+          repeat while (count of worklist) > 0
+            -- Get first item from worklist
+            set workItem to item 1 of worklist
+            set theFolder to item 1 of workItem
+            set currentPath to item 2 of workItem
+
+            -- Remove from worklist
+            if (count of worklist) > 1 then
+              set worklist to items 2 thru -1 of worklist
+            else
+              set worklist to {}
+            end if
+
+            set folderName to name of theFolder
+
+            -- Check if this is Deleted Items
+            set isDeletedItems to folderName is "Deleted Items" or folderName is "Trash"
+
+            -- Determine special folder type
+            set specialType to "null"
+            if folderName is "Inbox" then
+              set specialType to "inbox"
+            else if folderName is "Sent Items" or folderName is "Sent" then
+              set specialType to "sent"
+            else if folderName is "Drafts" then
+              set specialType to "drafts"
+            else if folderName is "Deleted Items" or folderName is "Trash" then
+              set specialType to "trash"
+            else if folderName is "Junk Email" or folderName is "Junk" then
+              set specialType to "junk"
+            else if folderName is "Archive" then
+              set specialType to "archive"
+            end if
+
+            -- Get counts if requested
+            ${includeCounts ? `
+            set folderCount to count of messages of theFolder
+            set unreadCount to 0
+            repeat with msg in messages of theFolder
+              if is read of msg is false then
+                set unreadCount to unreadCount + 1
+              end if
+            end repeat
+            set countInfo to "," & folderCount & "," & unreadCount` : `
+            set countInfo to ""`}
+
+            -- Build path string as JSON array
+            set pathJSON to "["
+            repeat with i from 1 to count of currentPath
+              if i > 1 then set pathJSON to pathJSON & ","
+              -- Escape quotes and backslashes in folder names
+              set pathItem to item i of currentPath
+              set pathItem to my replaceText(pathItem, "\\\\" as string, "\\\\\\\\" as string)
+              set pathItem to my replaceText(pathItem, "\\"" as string, "\\\\\\"" as string)
+              set pathJSON to pathJSON & "\\"" & pathItem & "\\""
+            end repeat
+            set pathJSON to pathJSON & "]"
+
+            -- Add folder info as JSON-like string
+            set folderInfo to pathJSON & "|" & accountEmail & "|" & specialType & countInfo
+            set end of folderList to folderInfo
+
+            -- Add subfolders to worklist unless this is Deleted Items and we're excluding
+            if not (isDeletedItems and excludeDeletedItems) then
+              repeat with subFolder in mail folders of theFolder
+                set subFolderName to name of subFolder
+                set subPath to currentPath & {subFolderName}
+                set end of worklist to {subFolder, subPath}
+              end repeat
+            end if
+          end repeat
+        end if
+      end repeat
+
+      return folderList
+    end tell
+
+    -- Helper function to replace text
+    on replaceText(theText, oldString, newString)
+      set AppleScript's text item delimiters to oldString
+      set textItems to text items of theText
+      set AppleScript's text item delimiters to newString
+      set theText to textItems as string
+      set AppleScript's text item delimiters to ""
+      return theText
+    end replaceText
+  `;
+
+  try {
+    const result = await runAppleScript(script);
+    console.error(`[listFolders] Raw result length: ${result.length}`);
+
+    // Parse the result - each folder is separated by ", "
+    const folderStrings = result.split(", ");
+    const folders: FolderInfo[] = [];
+
+    for (const folderStr of folderStrings) {
+      if (!folderStr.trim()) continue;
+
+      // Parse: pathJSON|account|specialType[,count,unreadCount]
+      const parts = folderStr.split("|");
+      if (parts.length < 3) continue;
+
+      try {
+        const path = JSON.parse(parts[0]);
+        const accountEmail = parts[1];
+        const specialPart = parts[2];
+
+        // Parse special folder and optional counts
+        const specialParts = specialPart.split(",");
+        const specialFolder = specialParts[0] === "null" ? null : specialParts[0];
+
+        const folderInfo: FolderInfo = {
+          path,
+          account: accountEmail,
+          specialFolder
+        };
+
+        if (includeCounts && specialParts.length >= 3) {
+          folderInfo.count = parseInt(specialParts[1], 10) || 0;
+          folderInfo.unreadCount = parseInt(specialParts[2], 10) || 0;
+        }
+
+        folders.push(folderInfo);
+      } catch (parseError) {
+        console.error(`[listFolders] Failed to parse folder: ${folderStr}`, parseError);
+      }
+    }
+
+    console.error(`[listFolders] Parsed ${folders.length} folders`);
+    return folders;
+  } catch (error) {
+    console.error("[listFolders] Error:", error);
+    throw error;
+  }
+}
 
 // Function to create a mail folder
 async function createFolder(name: string, parent?: string): Promise<string> {
@@ -2280,7 +2473,7 @@ async function searchContacts(searchTerm: string, limit: number = 10): Promise<a
 
 // Type guards for arguments
 function isMailArgs(args: unknown): args is {
-  operation: "unread" | "search" | "send" | "draft" | "reply" | "forward" | "folders" | "read" | "create_folder" | "move_email" | "rename_folder" | "delete_folder" | "count" | "save_attachments";
+  operation: "unread" | "search" | "send" | "draft" | "reply" | "forward" | "folders" | "read" | "create_folder" | "move_email" | "rename_folder" | "delete_folder" | "count" | "save_attachments" | "list_folders";
   folder?: string;
   limit?: number;
   searchTerm?: string;
@@ -2298,6 +2491,8 @@ function isMailArgs(args: unknown): args is {
   messageId?: string;
   targetFolder?: string;
   destinationFolder?: string;
+  includeCounts?: boolean;
+  excludeDeleted?: boolean;
   newName?: string;
   forwardTo?: string;
   forwardCc?: string;
@@ -2310,7 +2505,7 @@ function isMailArgs(args: unknown): args is {
 
   const { operation } = args as any;
 
-  if (!operation || !["unread", "search", "send", "draft", "reply", "forward", "folders", "read", "create_folder", "move_email", "rename_folder", "delete_folder", "count", "save_attachments"].includes(operation)) {
+  if (!operation || !["unread", "search", "send", "draft", "reply", "forward", "folders", "read", "create_folder", "move_email", "rename_folder", "delete_folder", "count", "save_attachments", "list_folders"].includes(operation)) {
     return false;
   }
 
@@ -2679,6 +2874,39 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             };
           }
 
+          case "list_folders": {
+            const folders = await listFolders({
+              includeCounts: args.includeCounts,
+              excludeDeleted: args.excludeDeleted !== false, // default true
+              account: args.account
+            });
+
+            // Format for display
+            const formatPath = (path: string[]) => path.join("/");
+            const lines = folders.map(f => {
+              let line = formatPath(f.path);
+              line += ` (${f.account})`;
+              if (f.specialFolder) line += ` [${f.specialFolder}]`;
+              if (f.count !== undefined) {
+                line += ` - ${f.count} emails`;
+                if (f.unreadCount && f.unreadCount > 0) {
+                  line += `, ${f.unreadCount} unread`;
+                }
+              }
+              return line;
+            });
+
+            return {
+              content: [{
+                type: "text",
+                text: folders.length > 0 ?
+                  `Found ${folders.length} folders:\n\n${lines.join("\n")}` :
+                  "No folders found."
+              }],
+              isError: false
+            };
+          }
+
           default:
             throw new Error(`Unknown mail operation: ${operation}`);
         }
@@ -2899,6 +3127,7 @@ export {
   replyEmail,
   forwardEmail,
   getMailFolders,
+  listFolders,
   createFolder,
   moveEmail,
   renameFolder,
