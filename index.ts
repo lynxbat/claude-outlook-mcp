@@ -34,8 +34,8 @@ const OUTLOOK_MAIL_TOOL: Tool = {
     properties: {
       operation: {
         type: "string",
-        description: "Operation to perform: 'unread', 'search', 'send', 'draft', 'reply', 'forward', 'folders', 'read', 'create_folder', 'move_email', 'rename_folder', 'delete_folder', 'count', 'save_attachments', or 'list_folders'",
-        enum: ["unread", "search", "send", "draft", "reply", "forward", "folders", "read", "create_folder", "move_email", "rename_folder", "delete_folder", "count", "save_attachments", "list_folders"]
+        description: "Operation to perform: 'unread', 'search', 'send', 'draft', 'reply', 'forward', 'folders', 'read', 'create_folder', 'move_email', 'rename_folder', 'delete_folder', 'count', 'save_attachments', 'list_folders', or 'empty_trash'",
+        enum: ["unread", "search", "send", "draft", "reply", "forward", "folders", "read", "create_folder", "move_email", "rename_folder", "delete_folder", "count", "save_attachments", "list_folders", "empty_trash"]
       },
       folder: {
         type: "string",
@@ -191,6 +191,14 @@ const OUTLOOK_MAIL_TOOL: Tool = {
       account: {
         type: "string",
         description: "Filter to specific account email address (optional, returns all accounts if not specified)"
+      },
+      preview: {
+        type: "boolean",
+        description: "Preview mode for empty_trash - returns item count and metadata without deleting (required: either preview or confirm)"
+      },
+      confirm: {
+        type: "boolean",
+        description: "Confirm execution for empty_trash - permanently deletes all items (required: either preview or confirm)"
       }
     },
     required: ["operation"]
@@ -1653,6 +1661,155 @@ async function deleteFolder(folder: string): Promise<string> {
   }
 }
 
+// Function to empty trash (Deleted Items folder)
+interface EmptyTrashResult {
+  preview?: boolean;
+  itemCount: number;
+  oldestItem?: string;
+  newestItem?: string;
+  totalSizeMB?: number;
+  deleted?: number;
+  message?: string;
+}
+
+async function emptyTrash(preview: boolean): Promise<EmptyTrashResult> {
+  console.error(`[emptyTrash] Mode: ${preview ? 'preview' : 'execute'}`);
+  await checkOutlookAccess();
+
+  if (preview) {
+    // Preview mode: get metadata without deleting
+    const script = `
+      tell application "Microsoft Outlook"
+        try
+          set deletedFolder to deleted items
+          set msgs to messages of deletedFolder
+          set itemCount to count of msgs
+
+          if itemCount is 0 then
+            return "0|||"
+          end if
+
+          -- Get date range and size
+          set oldestDate to ""
+          set newestDate to ""
+          set totalSize to 0
+
+          repeat with msg in msgs
+            set msgDate to time sent of msg
+            set msgSize to message size of msg
+            set totalSize to totalSize + msgSize
+
+            if oldestDate is "" then
+              set oldestDate to msgDate
+              set newestDate to msgDate
+            else
+              if msgDate < oldestDate then
+                set oldestDate to msgDate
+              end if
+              if msgDate > newestDate then
+                set newestDate to msgDate
+              end if
+            end if
+          end repeat
+
+          -- Format dates as ISO strings
+          set oldestStr to (year of oldestDate as string) & "-" & text -2 thru -1 of ("0" & ((month of oldestDate as number) as string)) & "-" & text -2 thru -1 of ("0" & (day of oldestDate as string))
+          set newestStr to (year of newestDate as string) & "-" & text -2 thru -1 of ("0" & ((month of newestDate as number) as string)) & "-" & text -2 thru -1 of ("0" & (day of newestDate as string))
+
+          return (itemCount as string) & "|" & oldestStr & "|" & newestStr & "|" & (totalSize as string)
+        on error errMsg
+          return "Error: " & errMsg
+        end try
+      end tell
+    `;
+
+    try {
+      const result = await runAppleScript(script);
+      console.error(`[emptyTrash] Preview result: ${result}`);
+
+      if (result.startsWith("Error:")) {
+        throw new Error(result);
+      }
+
+      const parts = result.split("|");
+      const itemCount = parseInt(parts[0], 10);
+
+      if (itemCount === 0) {
+        return {
+          preview: true,
+          itemCount: 0,
+          message: "Deleted Items folder is already empty"
+        };
+      }
+
+      const totalSizeBytes = parseInt(parts[3], 10) || 0;
+      const totalSizeMB = Math.round((totalSizeBytes / (1024 * 1024)) * 10) / 10;
+
+      return {
+        preview: true,
+        itemCount,
+        oldestItem: parts[1] || undefined,
+        newestItem: parts[2] || undefined,
+        totalSizeMB
+      };
+    } catch (error) {
+      console.error("[emptyTrash] Preview error:", error);
+      throw error;
+    }
+  } else {
+    // Execute mode: permanently delete all items
+    const script = `
+      tell application "Microsoft Outlook"
+        try
+          set deletedFolder to deleted items
+          set msgs to messages of deletedFolder
+          set itemCount to count of msgs
+
+          if itemCount is 0 then
+            return "0"
+          end if
+
+          set deletedCount to 0
+          repeat with msg in msgs
+            try
+              permanently delete msg
+              set deletedCount to deletedCount + 1
+            on error
+              -- Continue with next message if one fails
+            end try
+          end repeat
+
+          return deletedCount as string
+        on error errMsg
+          return "Error: " & errMsg
+        end try
+      end tell
+    `;
+
+    try {
+      const result = await runAppleScript(script);
+      console.error(`[emptyTrash] Execute result: ${result}`);
+
+      if (result.startsWith("Error:")) {
+        throw new Error(result);
+      }
+
+      const deleted = parseInt(result, 10);
+
+      return {
+        itemCount: deleted,
+        deleted,
+        message: deleted === 0
+          ? "Deleted Items folder is already empty"
+          : `Permanently deleted ${deleted} items from Deleted Items`
+      };
+    } catch (error) {
+      console.error("[emptyTrash] Execute error:", error);
+      throw error;
+    }
+  }
+}
+
 // Function to count emails in a folder
 async function countEmails(folder: string = "Inbox"): Promise<string> {
   console.error(`[countEmails] Counting emails in folder: ${folder}`);
@@ -2720,7 +2877,7 @@ async function searchContacts(searchTerm: string, limit: number = 10): Promise<a
 
 // Type guards for arguments
 function isMailArgs(args: unknown): args is {
-  operation: "unread" | "search" | "send" | "draft" | "reply" | "forward" | "folders" | "read" | "create_folder" | "move_email" | "rename_folder" | "delete_folder" | "count" | "save_attachments" | "list_folders";
+  operation: "unread" | "search" | "send" | "draft" | "reply" | "forward" | "folders" | "read" | "create_folder" | "move_email" | "rename_folder" | "delete_folder" | "count" | "save_attachments" | "list_folders" | "empty_trash";
   folder?: string;
   limit?: number;
   searchTerm?: string;
@@ -2758,12 +2915,14 @@ function isMailArgs(args: unknown): args is {
   removeCc?: string;
   removeBcc?: string;
   replyToMessageId?: string;
+  preview?: boolean;
+  confirm?: boolean;
 } {
   if (typeof args !== "object" || args === null) return false;
 
   const { operation } = args as any;
 
-  if (!operation || !["unread", "search", "send", "draft", "reply", "forward", "folders", "read", "create_folder", "move_email", "rename_folder", "delete_folder", "count", "save_attachments", "list_folders"].includes(operation)) {
+  if (!operation || !["unread", "search", "send", "draft", "reply", "forward", "folders", "read", "create_folder", "move_email", "rename_folder", "delete_folder", "count", "save_attachments", "list_folders", "empty_trash"].includes(operation)) {
     return false;
   }
 
@@ -2803,6 +2962,11 @@ function isMailArgs(args: unknown): args is {
       break;
     case "save_attachments":
       if (!(args as any).messageId || !(args as any).destinationFolder) return false;
+      break;
+    case "empty_trash":
+      // Must have either preview or confirm, but not both
+      if (!(args as any).preview && !(args as any).confirm) return false;
+      if ((args as any).preview && (args as any).confirm) return false;
       break;
   }
 
@@ -3200,6 +3364,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               }],
               isError: false
             };
+          }
+
+          case "empty_trash": {
+            // Validate: must have preview XOR confirm
+            if (!args.preview && !args.confirm) {
+              throw new Error("empty_trash requires either preview: true or confirm: true");
+            }
+            if (args.preview && args.confirm) {
+              throw new Error("Cannot use both preview and confirm - use one at a time");
+            }
+
+            try {
+              const result = await emptyTrash(args.preview === true);
+              return {
+                content: [{
+                  type: "text",
+                  text: JSON.stringify(result, null, 2)
+                }],
+                isError: false
+              };
+            } catch (error) {
+              return {
+                content: [{
+                  type: "text",
+                  text: `Error: ${error instanceof Error ? error.message : String(error)}`
+                }],
+                isError: true
+              };
+            }
           }
 
           default:
