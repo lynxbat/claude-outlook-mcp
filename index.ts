@@ -638,10 +638,8 @@ async function sendEmail(
       .join(' ');
   };
 
-  // Get name for display
-  const toName = extractNameFromEmail(to);
-
-  // Parse CC/BCC recipients using shared helper
+  // Parse TO/CC/BCC recipients using shared helper
+  const toRecipients = parseRecipients(to);
   const ccRecipients = cc ? parseRecipients(cc) : [];
   const bccRecipients = bcc ? parseRecipients(bcc) : [];
 
@@ -694,9 +692,9 @@ async function sendEmail(
           }
           
           tell msg
-            set recipTo to make new to recipient with properties {email address:{name:"${toName}", address:"${to}"}}
-            ${ccRecipients.map(r => `make new cc recipient with properties {email address:{name:"${r.name}", address:"${r.address}"}}`).join('\n            ')}
-            ${bccRecipients.map(r => `make new bcc recipient with properties {email address:{name:"${r.name}", address:"${r.address}"}}`).join('\n            ')}
+            ${toRecipients.map(r => `make new to recipient with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n            ')}
+            ${ccRecipients.map(r => `make new cc recipient with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n            ')}
+            ${bccRecipients.map(r => `make new bcc recipient with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n            ')}
 
             ${attachmentScript}
           end tell
@@ -739,9 +737,9 @@ async function sendEmail(
               `set plain text content of theMessage to "${escapedBody}"`
             }
             
-            set to recipients of theMessage to {"${to}"}
-            ${cc ? `set cc recipients of theMessage to {"${cc}"}` : ''}
-            ${bcc ? `set bcc recipients of theMessage to {"${bcc}"}` : ''}
+            ${toRecipients.map(r => `make new to recipient at theMessage with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n            ')}
+            ${ccRecipients.map(r => `make new cc recipient at theMessage with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n            ')}
+            ${bccRecipients.map(r => `make new bcc recipient at theMessage with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n            ')}
             
             ${processedAttachments.map(filePath => {
               const escapedPath = filePath.replace(/"/g, '\\"');
