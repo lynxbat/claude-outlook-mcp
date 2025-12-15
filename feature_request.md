@@ -226,9 +226,9 @@ User needs to reply to an email thread but change the recipients:
 - Keep original sender and others on CC
 - Maintain thread continuity (subject line, In-Reply-To headers, conversation threading)
 
-## Bug 1: `reply` Operation Cannot Modify Recipients
+## Reply Cannot Modify Recipients
 
-**FIXED:** Added 9 new parameters: `replyTo`, `replyCc`, `replyBcc` (override), `addTo`, `addCc`, `addBcc` (append), `removeTo`, `removeCc`, `removeBcc` (remove).
+**STATUS: FIXED** - Added 9 new parameters: `replyTo`, `replyCc`, `replyBcc` (override), `addTo`, `addCc`, `addBcc` (append), `removeTo`, `removeCc`, `removeBcc` (remove).
 
 ### Problem
 The `reply` operation does not accept `to` or `cc` parameters. It can only reply to the original sender with optional `replyAll: true`.
@@ -267,12 +267,12 @@ Cannot use `reply` for common workflow: "Reply but redirect the action to a diff
 
 ---
 
-## Bug 2: `draft` Operation Creates New Email, Not Reply
+## Draft Creates New Email Instead of Reply
 
-**FIXED:** Added `replyToMessageId` parameter to `draft` operation. Creates threaded reply draft when provided.
+**STATUS: FIXED** - Added `replyToMessageId` parameter to `draft` operation. Creates threaded reply draft when provided.
 
 ### Problem
-When trying to work around Bug 1 by using `draft`, it creates a completely new email rather than a reply in the thread.
+When trying to work around the reply recipient issue by using `draft`, it creates a completely new email rather than a reply in the thread.
 
 ### Actual Behavior
 ```javascript
@@ -308,9 +308,9 @@ A new operation like `draft_reply` or parameter `replyToMessageId`:
 
 ---
 
-## Bug 3: `forward` Operation Breaks Threading
+## Forward Breaks Threading (Workaround Issue)
 
-**RESOLVED:** Bug 1 fix eliminates need for forward workaround. Also added `forwardBcc` parameter for complete recipient control.
+**STATUS: RESOLVED** - Reply recipient fix eliminates need for forward workaround. Also added `forwardBcc` parameter for complete recipient control.
 
 ### Problem
 Using `forward` as a workaround creates "FW:" prefix instead of "Re:", breaking thread continuity.
@@ -339,9 +339,9 @@ Using `forward` as a workaround creates "FW:" prefix instead of "Re:", breaking 
 
 ---
 
-## Bug 4: Multiple CC Addresses Malformed
+## Multiple CC Addresses Malformed
 
-**FIXED:** Extracted `parseRecipients()` helper to properly parse comma-separated addresses into individual recipients. Applied to TO, CC, and BCC fields in all operations.
+**STATUS: FIXED** - Extracted `parseRecipients()` helper to properly parse comma-separated addresses into individual recipients. Applied to TO, CC, and BCC fields in all operations.
 
 ### Problem
 When specifying multiple CC addresses, they are wrapped in a single set of angle brackets as one entity, rather than being parsed as separate recipients.
@@ -374,9 +374,9 @@ cc: ccAddresses.split(',').map(e => e.trim()).join('; ')
 
 ---
 
-## Bug 5: False Success Messages
+## False Success Messages
 
-**FIXED:** Changed "sent successfully" to "queued for delivery" for send/reply/forward operations.
+**STATUS: FIXED** - Changed "sent successfully" to "queued for delivery" for send/reply/forward operations.
 
 ### Problem
 MCP operations return success messages that don't reflect actual Outlook state.
@@ -530,20 +530,6 @@ Return actual operation result:
   message: "Email forwarded successfully"  // Misleading
 }
 ```
-
----
-
-## Priority
-
-| Bug | Severity | Impact |
-|-----|----------|--------|
-| Bug 1: reply can't modify recipients | High | Blocks common workflow |
-| Bug 2: draft not a reply | High | No workaround for Bug 1 |
-| Bug 3: forward breaks threading | Medium | Workaround exists (manual edit) |
-| Bug 4: CC address malformed | High | Emails may fail to deliver |
-| Bug 5: False success messages | Medium | User confusion, trust issues |
-
-**Recommended Fix Order**: Bug 4 → Bug 1 → Bug 5 → Bug 2 → Bug 3
 
 ---
 
