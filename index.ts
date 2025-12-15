@@ -124,6 +124,42 @@ const OUTLOOK_MAIL_TOOL: Tool = {
         type: "boolean",
         description: "Whether to reply to all recipients (optional for reply operation, default: false)"
       },
+      replyTo: {
+        type: "string",
+        description: "Override TO recipients for reply (comma-separated emails). Cannot be used with addTo/removeTo."
+      },
+      replyCc: {
+        type: "string",
+        description: "Override CC recipients for reply (comma-separated emails). Cannot be used with addCc/removeCc."
+      },
+      replyBcc: {
+        type: "string",
+        description: "Override BCC recipients for reply (comma-separated emails). Cannot be used with addBcc/removeBcc."
+      },
+      addTo: {
+        type: "string",
+        description: "Add to TO recipients for reply (comma-separated emails). Cannot be used with replyTo."
+      },
+      addCc: {
+        type: "string",
+        description: "Add to CC recipients for reply (comma-separated emails). Cannot be used with replyCc."
+      },
+      addBcc: {
+        type: "string",
+        description: "Add to BCC recipients for reply (comma-separated emails). Cannot be used with replyBcc."
+      },
+      removeTo: {
+        type: "string",
+        description: "Remove from TO recipients for reply (comma-separated emails). Cannot be used with replyTo."
+      },
+      removeCc: {
+        type: "string",
+        description: "Remove from CC recipients for reply (comma-separated emails). Cannot be used with replyCc."
+      },
+      removeBcc: {
+        type: "string",
+        description: "Remove from BCC recipients for reply (comma-separated emails). Cannot be used with replyBcc."
+      },
       targetFolder: {
         type: "string",
         description: "Destination folder path (required for move_email operation)"
@@ -1256,10 +1292,41 @@ async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: st
 }
 
 // Function to reply to an email (preserves thread)
-async function replyEmail(messageId: string, replyBody: string, replyAll: boolean = false, isHtml: boolean = false, attachments?: string[]): Promise<string> {
+async function replyEmail(
+  messageId: string,
+  replyBody: string,
+  replyAll: boolean = false,
+  isHtml: boolean = false,
+  attachments?: string[],
+  recipientOptions?: {
+    replyTo?: string;
+    replyCc?: string;
+    replyBcc?: string;
+    addTo?: string;
+    addCc?: string;
+    addBcc?: string;
+    removeTo?: string;
+    removeCc?: string;
+    removeBcc?: string;
+  }
+): Promise<string> {
   console.error(`[replyEmail] Replying to message ${messageId}, replyAll: ${replyAll}, isHtml: ${isHtml}`);
   console.error(`[replyEmail] Attachments: ${attachments ? JSON.stringify(attachments) : 'none'}`);
+  console.error(`[replyEmail] Recipient options: ${recipientOptions ? JSON.stringify(recipientOptions) : 'none'}`);
   await checkOutlookAccess();
+
+  // Validate conflicting parameters
+  if (recipientOptions) {
+    if (recipientOptions.replyTo && (recipientOptions.addTo || recipientOptions.removeTo)) {
+      return "Error: Cannot use replyTo with addTo or removeTo";
+    }
+    if (recipientOptions.replyCc && (recipientOptions.addCc || recipientOptions.removeCc)) {
+      return "Error: Cannot use replyCc with addCc or removeCc";
+    }
+    if (recipientOptions.replyBcc && (recipientOptions.addBcc || recipientOptions.removeBcc)) {
+      return "Error: Cannot use replyBcc with addBcc or removeBcc";
+    }
+  }
 
   const escapedBody = escapeForAppleScript(replyBody);
   const replyCommand = replyAll ? "reply to theMsg with reply to all" : "reply to theMsg";
@@ -1292,6 +1359,126 @@ async function replyEmail(messageId: string, replyBody: string, replyAll: boolea
     }).join('\n')
     : '';
 
+  // Build recipient modification script
+  let recipientScript = '';
+  if (recipientOptions) {
+    const { replyTo, replyCc, replyBcc, addTo, addCc, addBcc, removeTo, removeCc, removeBcc } = recipientOptions;
+
+    // Handle TO recipients
+    if (replyTo) {
+      // Override: clear all TO and add new ones
+      const toRecipients = parseRecipients(replyTo);
+      recipientScript += `
+        -- Override TO recipients
+        delete every to recipient of replyMsg
+        ${toRecipients.map(r => `make new to recipient at replyMsg with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n        ')}
+      `;
+    } else {
+      // Add TO recipients
+      if (addTo) {
+        const toRecipients = parseRecipients(addTo);
+        recipientScript += `
+        -- Add TO recipients
+        ${toRecipients.map(r => `make new to recipient at replyMsg with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n        ')}
+        `;
+      }
+      // Remove TO recipients
+      if (removeTo) {
+        const removeAddresses = parseRecipients(removeTo).map(r => r.address.toLowerCase());
+        recipientScript += `
+        -- Remove TO recipients
+        set toRecipientsToRemove to {${removeAddresses.map(a => `"${escapeForAppleScript(a)}"`).join(', ')}}
+        set existingTo to to recipients of replyMsg
+        repeat with recipient in existingTo
+          set recipientAddr to address of email address of recipient
+          repeat with removeAddr in toRecipientsToRemove
+            if recipientAddr is removeAddr then
+              delete recipient
+              exit repeat
+            end if
+          end repeat
+        end repeat
+        `;
+      }
+    }
+
+    // Handle CC recipients
+    if (replyCc) {
+      // Override: clear all CC and add new ones
+      const ccRecipients = parseRecipients(replyCc);
+      recipientScript += `
+        -- Override CC recipients
+        delete every cc recipient of replyMsg
+        ${ccRecipients.map(r => `make new cc recipient at replyMsg with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n        ')}
+      `;
+    } else {
+      // Add CC recipients
+      if (addCc) {
+        const ccRecipients = parseRecipients(addCc);
+        recipientScript += `
+        -- Add CC recipients
+        ${ccRecipients.map(r => `make new cc recipient at replyMsg with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n        ')}
+        `;
+      }
+      // Remove CC recipients
+      if (removeCc) {
+        const removeAddresses = parseRecipients(removeCc).map(r => r.address.toLowerCase());
+        recipientScript += `
+        -- Remove CC recipients
+        set ccRecipientsToRemove to {${removeAddresses.map(a => `"${escapeForAppleScript(a)}"`).join(', ')}}
+        set existingCc to cc recipients of replyMsg
+        repeat with recipient in existingCc
+          set recipientAddr to address of email address of recipient
+          repeat with removeAddr in ccRecipientsToRemove
+            if recipientAddr is removeAddr then
+              delete recipient
+              exit repeat
+            end if
+          end repeat
+        end repeat
+        `;
+      }
+    }
+
+    // Handle BCC recipients
+    if (replyBcc) {
+      // Override: clear all BCC and add new ones
+      const bccRecipients = parseRecipients(replyBcc);
+      recipientScript += `
+        -- Override BCC recipients
+        delete every bcc recipient of replyMsg
+        ${bccRecipients.map(r => `make new bcc recipient at replyMsg with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n        ')}
+      `;
+    } else {
+      // Add BCC recipients
+      if (addBcc) {
+        const bccRecipients = parseRecipients(addBcc);
+        recipientScript += `
+        -- Add BCC recipients
+        ${bccRecipients.map(r => `make new bcc recipient at replyMsg with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n        ')}
+        `;
+      }
+      // Remove BCC recipients
+      if (removeBcc) {
+        const removeAddresses = parseRecipients(removeBcc).map(r => r.address.toLowerCase());
+        recipientScript += `
+        -- Remove BCC recipients
+        set bccRecipientsToRemove to {${removeAddresses.map(a => `"${escapeForAppleScript(a)}"`).join(', ')}}
+        set existingBcc to bcc recipients of replyMsg
+        repeat with recipient in existingBcc
+          set recipientAddr to address of email address of recipient
+          repeat with removeAddr in bccRecipientsToRemove
+            if recipientAddr is removeAddr then
+              delete recipient
+              exit repeat
+            end if
+          end repeat
+        end repeat
+        `;
+      }
+    }
+  }
+
   const script = `
     tell application "Microsoft Outlook"
       try
@@ -1306,6 +1493,9 @@ async function replyEmail(messageId: string, replyBody: string, replyAll: boolea
         set currentContent to plain text content of replyMsg
         set plain text content of replyMsg to "${escapedBody}" & return & return & currentContent
         `}
+
+        -- Modify recipients if specified
+        ${recipientScript}
 
         -- Add attachments if provided
         ${attachmentScript}
@@ -2486,6 +2676,15 @@ function isMailArgs(args: unknown): args is {
   includeOriginalAttachments?: boolean;
   replyBody?: string;
   replyAll?: boolean;
+  replyTo?: string;
+  replyCc?: string;
+  replyBcc?: string;
+  addTo?: string;
+  addCc?: string;
+  addBcc?: string;
+  removeTo?: string;
+  removeCc?: string;
+  removeBcc?: string;
 } {
   if (typeof args !== "object" || args === null) return false;
 
@@ -2735,7 +2934,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (!args.messageId || !args.replyBody) {
               throw new Error("Message ID and replyBody are required for reply operation");
             }
-            const result = await replyEmail(args.messageId, args.replyBody, args.replyAll || false, args.isHtml || false, args.attachments);
+            // Build recipient options if any are provided
+            const recipientOptions = (args.replyTo || args.replyCc || args.replyBcc ||
+                                      args.addTo || args.addCc || args.addBcc ||
+                                      args.removeTo || args.removeCc || args.removeBcc) ? {
+              replyTo: args.replyTo,
+              replyCc: args.replyCc,
+              replyBcc: args.replyBcc,
+              addTo: args.addTo,
+              addCc: args.addCc,
+              addBcc: args.addBcc,
+              removeTo: args.removeTo,
+              removeCc: args.removeCc,
+              removeBcc: args.removeBcc
+            } : undefined;
+
+            const result = await replyEmail(
+              args.messageId,
+              args.replyBody,
+              args.replyAll || false,
+              args.isHtml || false,
+              args.attachments,
+              recipientOptions
+            );
             return {
               content: [{ type: "text", text: result }],
               isError: result.startsWith("Error:")
