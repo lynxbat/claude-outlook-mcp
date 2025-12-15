@@ -7,7 +7,7 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { runAppleScript } from 'run-applescript';
-import { parseEmailOutput, buildFolderRef, buildNestedFolderRef, escapeForAppleScript, parseRecipients } from './helpers';
+import { parseEmailOutput, buildFolderRef, buildNestedFolderRef, escapeForAppleScript, parseRecipients, detectHtml } from './helpers';
 
 // Re-export helpers for testing
 export { parseEmailOutput, buildFolderRef, buildNestedFolderRef, escapeForAppleScript, parseRecipients } from './helpers';
@@ -621,13 +621,16 @@ async function sendEmail(
   body: string, 
   cc?: string, 
   bcc?: string, 
-  isHtml: boolean = false,
+  isHtml?: boolean,
   attachments?: string[]
 ): Promise<string> {
   console.error(`[sendEmail] Sending email to: ${to}, subject: "${subject}"`);
   console.error(`[sendEmail] Attachments: ${attachments ? JSON.stringify(attachments) : 'none'}`);
-  
+
   await checkOutlookAccess();
+
+  // Auto-detect HTML if isHtml not explicitly provided
+  const useHtml = isHtml ?? detectHtml(body);
 
   // Extract name from email if possible (for display name)
   const extractNameFromEmail = (email: string): string => {
@@ -685,7 +688,7 @@ async function sendEmail(
         try
           set msg to make new outgoing message with properties {subject:"${escapedSubject}"}
           
-          ${isHtml ?
+          ${useHtml ?
             `set content of msg to "${escapedBody}"`
           :
             `set plain text content of msg to "${escapedBody}"`
@@ -731,7 +734,7 @@ async function sendEmail(
             set theMessage to item 1 of mail items of newDraft
             set subject of theMessage to "${escapedSubject}"
             
-            ${isHtml ?
+            ${useHtml ?
               `set content of theMessage to "${escapedBody}"`
             :
               `set plain text content of theMessage to "${escapedBody}"`
@@ -784,7 +787,7 @@ async function sendEmail(
             try
               set newMessage to make new outgoing message with properties {subject:"${escapedSubject}", visible:true}
               
-              ${isHtml ?
+              ${useHtml ?
                 `set content of newMessage to "${escapedBody}"`
               :
                 `set plain text content of newMessage to "${escapedBody}"`
@@ -840,7 +843,7 @@ async function createDraft(
   body: string,
   cc?: string,
   bcc?: string,
-  isHtml: boolean = false,
+  isHtml?: boolean,
   attachments?: string[],
   replyToMessageId?: string
 ): Promise<string> {
@@ -849,6 +852,9 @@ async function createDraft(
   console.error(`[createDraft] Reply to message ID: ${replyToMessageId || 'none'}`);
 
   await checkOutlookAccess();
+
+  // Auto-detect HTML if isHtml not explicitly provided
+  const useHtml = isHtml ?? detectHtml(body);
 
   // Parse TO/CC/BCC recipients using shared helper
   const toRecipients = parseRecipients(to);
@@ -894,7 +900,7 @@ async function createDraft(
           set replyMsg to reply to theMsg without opening window
 
           -- Set the reply content (prepend to existing quoted content)
-          ${isHtml ? `
+          ${useHtml ? `
           set currentContent to content of replyMsg
           set content of replyMsg to "${escapedBody}" & "<br><br>" & currentContent
           ` : `
@@ -948,7 +954,7 @@ async function createDraft(
       try
         set newMessage to make new outgoing message with properties {subject:"${escapedSubject}"}
 
-        ${isHtml ?
+        ${useHtml ?
           `set content of newMessage to "${escapedBody}"`
         :
           `set plain text content of newMessage to "${escapedBody}"`
@@ -1363,7 +1369,7 @@ async function replyEmail(
   messageId: string,
   replyBody: string,
   replyAll: boolean = false,
-  isHtml: boolean = false,
+  isHtml?: boolean,
   attachments?: string[],
   recipientOptions?: {
     replyTo?: string;
@@ -1377,10 +1383,14 @@ async function replyEmail(
     removeBcc?: string;
   }
 ): Promise<string> {
-  console.error(`[replyEmail] Replying to message ${messageId}, replyAll: ${replyAll}, isHtml: ${isHtml}`);
+  await checkOutlookAccess();
+
+  // Auto-detect HTML if isHtml not explicitly provided
+  const useHtml = isHtml ?? detectHtml(replyBody);
+
+  console.error(`[replyEmail] Replying to message ${messageId}, replyAll: ${replyAll}, isHtml: ${useHtml}`);
   console.error(`[replyEmail] Attachments: ${attachments ? JSON.stringify(attachments) : 'none'}`);
   console.error(`[replyEmail] Recipient options: ${recipientOptions ? JSON.stringify(recipientOptions) : 'none'}`);
-  await checkOutlookAccess();
 
   // Validate conflicting parameters
   if (recipientOptions) {
@@ -1553,7 +1563,7 @@ async function replyEmail(
         set replyMsg to ${replyCommand} without opening window
 
         -- Set the reply content (prepend to existing quoted content)
-        ${isHtml ? `
+        ${useHtml ? `
         set currentContent to content of replyMsg
         set content of replyMsg to "${escapedBody}" & "<br><br>" & currentContent
         ` : `
@@ -3119,10 +3129,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const result = await sendEmail(
               args.to, 
               args.subject, 
-              args.body, 
-              args.cc, 
-              args.bcc, 
-              args.isHtml || false,
+              args.body,
+              args.cc,
+              args.bcc,
+              args.isHtml,
               args.attachments
             );
             
@@ -3158,7 +3168,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               args.body,
               args.cc,
               args.bcc,
-              args.isHtml || false,
+              args.isHtml,
               args.attachments,
               args.replyToMessageId
             );
@@ -3192,7 +3202,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               args.messageId,
               args.replyBody,
               args.replyAll || false,
-              args.isHtml || false,
+              args.isHtml,
               args.attachments,
               recipientOptions
             );

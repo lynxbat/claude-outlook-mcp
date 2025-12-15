@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { buildFolderRef, buildNestedFolderRef, escapeForAppleScript, parseRecipients } from "../../helpers";
+import { buildFolderRef, buildNestedFolderRef, escapeForAppleScript, parseRecipients, detectHtml } from "../../helpers";
 
 describe("buildFolderRef", () => {
   it("returns 'inbox' for Inbox folder", () => {
@@ -114,5 +114,58 @@ describe("parseRecipients", () => {
     const result = parseRecipients("john.doe@example.com");
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe("john.doe");
+  });
+});
+
+describe("detectHtml", () => {
+  it("detects common HTML tags", () => {
+    expect(detectHtml("<p>Hello</p>")).toBe(true);
+    expect(detectHtml("<div>Content</div>")).toBe(true);
+    expect(detectHtml("<br>")).toBe(true);
+    expect(detectHtml("<br/>")).toBe(true);
+    expect(detectHtml("<span>text</span>")).toBe(true);
+  });
+
+  it("detects HTML tags with attributes", () => {
+    expect(detectHtml('<a href="http://example.com">link</a>')).toBe(true);
+    expect(detectHtml('<img src="image.png" alt="test">')).toBe(true);
+    expect(detectHtml('<div class="container">')).toBe(true);
+  });
+
+  it("detects various block elements", () => {
+    expect(detectHtml("<table><tr><td>data</td></tr></table>")).toBe(true);
+    expect(detectHtml("<ul><li>item</li></ul>")).toBe(true);
+    expect(detectHtml("<ol><li>item</li></ol>")).toBe(true);
+    expect(detectHtml("<h1>Title</h1>")).toBe(true);
+    expect(detectHtml("<h6>Small heading</h6>")).toBe(true);
+  });
+
+  it("detects inline formatting tags", () => {
+    expect(detectHtml("<b>bold</b>")).toBe(true);
+    expect(detectHtml("<i>italic</i>")).toBe(true);
+    expect(detectHtml("<strong>strong</strong>")).toBe(true);
+    expect(detectHtml("<em>emphasis</em>")).toBe(true);
+  });
+
+  it("returns false for plain text", () => {
+    expect(detectHtml("Hello world")).toBe(false);
+    expect(detectHtml("Just some text")).toBe(false);
+    expect(detectHtml("Price is $50")).toBe(false);
+  });
+
+  it("returns false for text with angle brackets that arent HTML", () => {
+    expect(detectHtml("5 < 10 and 10 > 5")).toBe(false);
+    expect(detectHtml("Use -> for arrows")).toBe(false);
+    expect(detectHtml("<invalid>not a tag")).toBe(false);
+  });
+
+  it("handles case insensitivity", () => {
+    expect(detectHtml("<P>Uppercase</P>")).toBe(true);
+    expect(detectHtml("<DIV>Mixed</div>")).toBe(true);
+    expect(detectHtml("<Br>")).toBe(true);
+  });
+
+  it("handles empty string", () => {
+    expect(detectHtml("")).toBe(false);
   });
 });

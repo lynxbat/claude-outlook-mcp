@@ -131,3 +131,12 @@ export function escapeForAppleScript(str: string): string {
     .replace(/\\/g, "\\\\")
     .replace(/"/g, '\\"');
 }
+
+/**
+ * Detect if a string contains HTML content
+ * Looks for common HTML tags to determine if content should be treated as HTML
+ */
+export function detectHtml(content: string): boolean {
+  const htmlPattern = /<(p|div|br|span|table|ul|ol|li|h[1-6]|a|b|i|strong|em|img|hr)[>\s\/]/i;
+  return htmlPattern.test(content);
+}
