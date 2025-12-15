@@ -160,6 +160,10 @@ const OUTLOOK_MAIL_TOOL: Tool = {
         type: "string",
         description: "Remove from BCC recipients for reply (comma-separated emails). Cannot be used with replyBcc."
       },
+      replyToMessageId: {
+        type: "string",
+        description: "Message ID to reply to (optional for draft operation). When provided, creates a reply draft with proper threading instead of a new email."
+      },
       targetFolder: {
         type: "string",
         description: "Destination folder path (required for move_email operation)"
@@ -827,10 +831,12 @@ async function createDraft(
   cc?: string,
   bcc?: string,
   isHtml: boolean = false,
-  attachments?: string[]
+  attachments?: string[],
+  replyToMessageId?: string
 ): Promise<string> {
   console.error(`[createDraft] Creating draft to: ${to}, subject: "${subject}"`);
   console.error(`[createDraft] Attachments: ${attachments ? JSON.stringify(attachments) : 'none'}`);
+  console.error(`[createDraft] Reply to message ID: ${replyToMessageId || 'none'}`);
 
   await checkOutlookAccess();
 
@@ -864,6 +870,65 @@ async function createDraft(
     });
   }
 
+  // Handle reply draft vs new draft
+  if (replyToMessageId) {
+    // Create a reply draft (preserves threading)
+    const replyAttachmentScript = processedAttachments.length > 0
+      ? processedAttachments.map(filePath => {
+        const escapedPath = filePath.replace(/"/g, '\\"');
+        return `
+          try
+            set attachmentFile to POSIX file "${escapedPath}"
+            make new attachment at replyMsg with properties {file:attachmentFile}
+          on error errMsg
+            log "Failed to attach file: ${escapedPath} - Error: " & errMsg
+          end try
+        `;
+      }).join('\n')
+      : '';
+
+    const replyScript = `
+      tell application "Microsoft Outlook"
+        try
+          set theMsg to message id ${replyToMessageId}
+          set replyMsg to reply to theMsg without opening window
+
+          -- Set the reply content (prepend to existing quoted content)
+          ${isHtml ? `
+          set currentContent to content of replyMsg
+          set content of replyMsg to "${escapedBody}" & "<br><br>" & currentContent
+          ` : `
+          set currentContent to plain text content of replyMsg
+          set plain text content of replyMsg to "${escapedBody}" & return & return & currentContent
+          `}
+
+          -- Add attachments if provided
+          ${replyAttachmentScript}
+
+          -- Open the reply draft for editing
+          open replyMsg
+
+          -- Bring Outlook to front
+          activate
+
+          return "Reply draft created and opened in Outlook (thread preserved)"
+        on error errMsg
+          return "Error: " & errMsg
+        end try
+      end tell
+    `;
+
+    try {
+      const result = await runAppleScript(replyScript);
+      console.error(`[createDraft] Reply draft result: ${result}`);
+      return result;
+    } catch (error) {
+      console.error("[createDraft] Error creating reply draft:", error);
+      return `Error: ${error}`;
+    }
+  }
+
+  // Standard new draft logic
   const attachmentScript = processedAttachments.length > 0
     ? processedAttachments.map(filePath => {
       const escapedPath = filePath.replace(/"/g, '\\"');
@@ -2685,6 +2750,7 @@ function isMailArgs(args: unknown): args is {
   removeTo?: string;
   removeCc?: string;
   removeBcc?: string;
+  replyToMessageId?: string;
 } {
   if (typeof args !== "object" || args === null) return false;
 
@@ -2703,7 +2769,12 @@ function isMailArgs(args: unknown): args is {
       if (!(args as any).to || !(args as any).subject || !(args as any).body) return false;
       break;
     case "draft":
-      if (!(args as any).to || !(args as any).subject || !(args as any).body) return false;
+      // Either a new draft (to, subject, body) or a reply draft (replyToMessageId, body)
+      if ((args as any).replyToMessageId) {
+        if (!(args as any).body) return false;
+      } else {
+        if (!(args as any).to || !(args as any).subject || !(args as any).body) return false;
+      }
       break;
     case "reply":
       if (!(args as any).messageId || !(args as any).replyBody) return false;
@@ -2903,8 +2974,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
 
           case "draft": {
-            if (!args.to || !args.subject || !args.body) {
-              throw new Error("Recipient (to), subject, and body are required for draft operation");
+            // Either a new draft (to, subject, body) or a reply draft (replyToMessageId, body)
+            if (args.replyToMessageId) {
+              if (!args.body) {
+                throw new Error("Body is required for reply draft operation");
+              }
+            } else {
+              if (!args.to || !args.subject || !args.body) {
+                throw new Error("Recipient (to), subject, and body are required for draft operation (or use replyToMessageId for reply drafts)");
+              }
             }
 
             // Validate attachments if provided
@@ -2913,15 +2991,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
 
             console.error(`[CallTool] Create draft with attachments: ${args.attachments ? JSON.stringify(args.attachments) : 'none'}`);
+            console.error(`[CallTool] Reply to message ID: ${args.replyToMessageId || 'none'}`);
 
             const draftResult = await createDraft(
-              args.to,
-              args.subject,
+              args.to || "",
+              args.subject || "",
               args.body,
               args.cc,
               args.bcc,
               args.isHtml || false,
-              args.attachments
+              args.attachments,
+              args.replyToMessageId
             );
 
             return {
