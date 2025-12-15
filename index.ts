@@ -108,6 +108,10 @@ const OUTLOOK_MAIL_TOOL: Tool = {
         type: "string",
         description: "CC email address for forward (optional for forward operation)"
       },
+      forwardBcc: {
+        type: "string",
+        description: "BCC email address for forward (optional for forward operation)"
+      },
       forwardComment: {
         type: "string",
         description: "Comment to add above forwarded message (optional for forward operation)"
@@ -1261,7 +1265,7 @@ async function moveEmail(messageId: string, targetFolder: string): Promise<strin
 }
 
 // Function to forward an email
-async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: string, forwardComment?: string, attachments?: string[], includeOriginalAttachments: boolean = true): Promise<string> {
+async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: string, forwardBcc?: string, forwardComment?: string, attachments?: string[], includeOriginalAttachments: boolean = true): Promise<string> {
   console.error(`[forwardEmail] Forwarding message ${messageId} to: ${forwardTo}`);
   console.error(`[forwardEmail] New attachments: ${attachments ? JSON.stringify(attachments) : 'none'}`);
   console.error(`[forwardEmail] Include original attachments: ${includeOriginalAttachments}`);
@@ -1270,6 +1274,7 @@ async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: st
   const escapedComment = forwardComment ? escapeForAppleScript(forwardComment) : "";
   const escapedTo = escapeForAppleScript(forwardTo);
   const ccRecipients = forwardCc ? parseRecipients(forwardCc) : [];
+  const bccRecipients = forwardBcc ? parseRecipients(forwardBcc) : [];
 
   // Process new attachments: Convert to absolute paths if they are relative
   let processedAttachments: string[] = [];
@@ -1319,10 +1324,11 @@ async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: st
         set theMsg to message id ${messageId}
         set fwdMsg to forward theMsg without opening window
 
-        -- Add recipient
+        -- Add recipients
         tell fwdMsg
           make new to recipient with properties {email address:{address:"${escapedTo}"}}
           ${ccRecipients.map(r => `make new cc recipient with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n          ')}
+          ${bccRecipients.map(r => `make new bcc recipient with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n          ')}
         end tell
 
         ${removeOriginalAttachmentsScript}
@@ -2737,6 +2743,7 @@ function isMailArgs(args: unknown): args is {
   newName?: string;
   forwardTo?: string;
   forwardCc?: string;
+  forwardBcc?: string;
   forwardComment?: string;
   includeOriginalAttachments?: boolean;
   replyBody?: string;
@@ -3051,6 +3058,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               args.messageId,
               args.forwardTo,
               args.forwardCc,
+              args.forwardBcc,
               args.forwardComment,
               args.attachments,
               args.includeOriginalAttachments !== undefined ? args.includeOriginalAttachments : true
