@@ -341,7 +341,7 @@ Using `forward` as a workaround creates "FW:" prefix instead of "Re:", breaking 
 
 ## Bug 4: Multiple CC Addresses Malformed
 
-**FIXED:** Extracted `parseRecipients()` helper to properly parse comma-separated addresses into individual recipients.
+**FIXED:** Extracted `parseRecipients()` helper to properly parse comma-separated addresses into individual recipients. Applied to TO, CC, and BCC fields in all operations.
 
 ### Problem
 When specifying multiple CC addresses, they are wrapped in a single set of angle brackets as one entity, rather than being parsed as separate recipients.
