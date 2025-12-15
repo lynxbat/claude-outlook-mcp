@@ -689,7 +689,7 @@ async function sendEmail(
           delay 1
           
           send msg
-          return "Email sent successfully with attachments"
+          return "Email queued for delivery (with attachments)"
         on error errMsg
           return "Error: " & errMsg
         end try
@@ -744,7 +744,7 @@ async function sendEmail(
             delay 1
             
             send theMessage
-            return "Email sent successfully with method 2"
+            return "Email queued for delivery"
           on error errMsg
             return "Error: " & errMsg
           end try
@@ -1274,7 +1274,7 @@ async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: st
         -- Send the forward
         send fwdMsg
 
-        return "Email forwarded successfully to ${escapedTo}${processedAttachments.length > 0 ? ` with ${processedAttachments.length} new attachment(s)` : ''}${!includeOriginalAttachments ? ' (original attachments removed)' : ''}"
+        return "Forward queued for delivery to ${escapedTo}${processedAttachments.length > 0 ? ` with ${processedAttachments.length} new attachment(s)` : ''}${!includeOriginalAttachments ? ' (original attachments removed)' : ''}"
       on error errMsg
         return "Error: " & errMsg
       end try
@@ -1503,7 +1503,7 @@ async function replyEmail(
         -- Send the reply
         send replyMsg
 
-        return "Reply sent successfully${processedAttachments.length > 0 ? ` with ${processedAttachments.length} attachment(s)` : ''}"
+        return "Reply queued for delivery${processedAttachments.length > 0 ? ` with ${processedAttachments.length} attachment(s)` : ''}"
       on error errMsg
         return "Error: " & errMsg
       end try
