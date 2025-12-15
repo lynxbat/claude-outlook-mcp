@@ -213,9 +213,11 @@ This is a breaking change to the output format. Options:
 
 # Bug Report: Email Reply/Forward Operations
 
+**STATUS: ALL BUGS FIXED**
+
 ## Summary
 
-Multiple issues with the `reply`, `draft`, and `forward` operations make it impossible to reliably create email replies with modified recipients.
+~~Multiple issues with the `reply`, `draft`, and `forward` operations make it impossible to reliably create email replies with modified recipients.~~
 
 ## Use Case
 
@@ -225,6 +227,8 @@ User needs to reply to an email thread but change the recipients:
 - Maintain thread continuity (subject line, In-Reply-To headers, conversation threading)
 
 ## Bug 1: `reply` Operation Cannot Modify Recipients
+
+**FIXED:** Added 9 new parameters: `replyTo`, `replyCc`, `replyBcc` (override), `addTo`, `addCc`, `addBcc` (append), `removeTo`, `removeCc`, `removeBcc` (remove).
 
 ### Problem
 The `reply` operation does not accept `to` or `cc` parameters. It can only reply to the original sender with optional `replyAll: true`.
@@ -265,6 +269,8 @@ Cannot use `reply` for common workflow: "Reply but redirect the action to a diff
 
 ## Bug 2: `draft` Operation Creates New Email, Not Reply
 
+**FIXED:** Added `replyToMessageId` parameter to `draft` operation. Creates threaded reply draft when provided.
+
 ### Problem
 When trying to work around Bug 1 by using `draft`, it creates a completely new email rather than a reply in the thread.
 
@@ -304,6 +310,8 @@ A new operation like `draft_reply` or parameter `replyToMessageId`:
 
 ## Bug 3: `forward` Operation Breaks Threading
 
+**RESOLVED:** Bug 1 fix eliminates need for forward workaround. Also added `forwardBcc` parameter for complete recipient control.
+
 ### Problem
 Using `forward` as a workaround creates "FW:" prefix instead of "Re:", breaking thread continuity.
 
@@ -332,6 +340,8 @@ Using `forward` as a workaround creates "FW:" prefix instead of "Re:", breaking 
 ---
 
 ## Bug 4: Multiple CC Addresses Malformed
+
+**FIXED:** Extracted `parseRecipients()` helper to properly parse comma-separated addresses into individual recipients.
 
 ### Problem
 When specifying multiple CC addresses, they are wrapped in a single set of angle brackets as one entity, rather than being parsed as separate recipients.
@@ -365,6 +375,8 @@ cc: ccAddresses.split(',').map(e => e.trim()).join('; ')
 ---
 
 ## Bug 5: False Success Messages
+
+**FIXED:** Changed "sent successfully" to "queued for delivery" for send/reply/forward operations.
 
 ### Problem
 MCP operations return success messages that don't reflect actual Outlook state.
@@ -537,7 +549,23 @@ Return actual operation result:
 
 # Feature Request: Empty Deleted Items / Permanent Delete
 
-## Use Case
+**STATUS: IMPLEMENTED** - The `empty_trash` operation with two-phase safety (preview/confirm).
+
+## Usage
+
+```javascript
+// Phase 1: Preview
+{ operation: "empty_trash", preview: true }
+// Returns: { preview: true, itemCount: 847, oldestItem: "2024-01-15", newestItem: "2025-12-14", totalSizeMB: 156.4 }
+
+// Phase 2: Execute
+{ operation: "empty_trash", confirm: true }
+// Returns: { deleted: 847, message: "Permanently deleted 847 items from Deleted Items" }
+```
+
+---
+
+## Original Use Case
 
 Users need to permanently delete emails to:
 - Free up mailbox storage
