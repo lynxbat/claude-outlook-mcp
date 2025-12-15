@@ -551,7 +551,26 @@ Return actual operation result:
 
 **STATUS: IMPLEMENTED** - When `isHtml` is not explicitly provided, the body is automatically scanned for HTML tags.
 
-## Problem
+## Usage
+
+```javascript
+// HTML is auto-detected - no need to specify isHtml
+{ operation: "send", to: "...", subject: "...", body: "<p>Hello</p><p>World</p>" }
+// Result: Sent as HTML (auto-detected)
+
+{ operation: "send", to: "...", subject: "...", body: "Hello, plain text here" }
+// Result: Sent as plain text (auto-detected)
+
+// Explicit override still works
+{ operation: "send", to: "...", subject: "...", body: "<p>Tags shown literally</p>", isHtml: false }
+// Result: Sent as plain text (explicit override)
+```
+
+**Applies to:** `send`, `draft`, `reply` operations
+
+---
+
+## Original Problem
 
 When sending emails, if the body contains HTML tags but `isHtml` is not set to `true`, Outlook renders the literal tags as text:
 
