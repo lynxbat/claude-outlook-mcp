@@ -9,6 +9,35 @@ export interface ParsedEmail {
   content: string;
 }
 
+export interface EmailRecipient {
+  name: string;
+  address: string;
+}
+
+/**
+ * Extract display name from email address
+ * "John Doe <john@example.com>" -> "John Doe"
+ * "john@example.com" -> "john"
+ */
+function extractNameFromEmail(email: string): string {
+  const match = email.match(/^([^<]+)</);
+  if (match) {
+    return match[1].trim();
+  }
+  return email.split('@')[0];
+}
+
+/**
+ * Parse comma-separated email addresses into recipient objects
+ * "a@b.com, c@d.com" -> [{name: "a", address: "a@b.com"}, {name: "c", address: "c@d.com"}]
+ */
+export function parseRecipients(emailString: string): EmailRecipient[] {
+  return emailString.split(',').map(email => {
+    const trimmed = email.trim();
+    return { name: extractNameFromEmail(trimmed), address: trimmed };
+  });
+}
+
 /**
  * Parse email output from AppleScript delimited format
  * Supports two formats:

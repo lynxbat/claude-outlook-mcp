@@ -7,10 +7,10 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { runAppleScript } from 'run-applescript';
-import { parseEmailOutput, buildFolderRef, buildNestedFolderRef, escapeForAppleScript } from './helpers';
+import { parseEmailOutput, buildFolderRef, buildNestedFolderRef, escapeForAppleScript, parseRecipients } from './helpers';
 
 // Re-export helpers for testing
-export { parseEmailOutput, buildFolderRef, buildNestedFolderRef, escapeForAppleScript } from './helpers';
+export { parseEmailOutput, buildFolderRef, buildNestedFolderRef, escapeForAppleScript, parseRecipients } from './helpers';
 
 // Folder info type for list_folders operation
 interface FolderInfo {
@@ -589,14 +589,7 @@ async function sendEmail(
   // Get name for display
   const toName = extractNameFromEmail(to);
 
-  // Parse multiple recipients (comma-separated)
-  const parseRecipients = (recipientStr: string): Array<{name: string, address: string}> => {
-    return recipientStr.split(',').map(email => {
-      const trimmed = email.trim();
-      return { name: extractNameFromEmail(trimmed), address: trimmed };
-    });
-  };
-
+  // Parse CC/BCC recipients using shared helper
   const ccRecipients = cc ? parseRecipients(cc) : [];
   const bccRecipients = bcc ? parseRecipients(bcc) : [];
 
@@ -816,14 +809,7 @@ async function createDraft(
 
   const toName = extractNameFromEmail(to);
 
-  // Parse multiple recipients (comma-separated)
-  const parseRecipients = (recipientStr: string): Array<{name: string, address: string}> => {
-    return recipientStr.split(',').map(email => {
-      const trimmed = email.trim();
-      return { name: extractNameFromEmail(trimmed), address: trimmed };
-    });
-  };
-
+  // Parse CC/BCC recipients using shared helper
   const ccRecipients = cc ? parseRecipients(cc) : [];
   const bccRecipients = bcc ? parseRecipients(bcc) : [];
 
@@ -1182,7 +1168,7 @@ async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: st
 
   const escapedComment = forwardComment ? escapeForAppleScript(forwardComment) : "";
   const escapedTo = escapeForAppleScript(forwardTo);
-  const escapedCc = forwardCc ? escapeForAppleScript(forwardCc) : "";
+  const ccRecipients = forwardCc ? parseRecipients(forwardCc) : [];
 
   // Process new attachments: Convert to absolute paths if they are relative
   let processedAttachments: string[] = [];
@@ -1235,7 +1221,7 @@ async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: st
         -- Add recipient
         tell fwdMsg
           make new to recipient with properties {email address:{address:"${escapedTo}"}}
-          ${forwardCc ? `make new cc recipient with properties {email address:{address:"${escapedCc}"}}` : ''}
+          ${ccRecipients.map(r => `make new cc recipient with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n          ')}
         end tell
 
         ${removeOriginalAttachmentsScript}

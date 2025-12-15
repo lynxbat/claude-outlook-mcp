@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { buildFolderRef, buildNestedFolderRef, escapeForAppleScript } from "../../helpers";
+import { buildFolderRef, buildNestedFolderRef, escapeForAppleScript, parseRecipients } from "../../helpers";
 
 describe("buildFolderRef", () => {
   it("returns 'inbox' for Inbox folder", () => {
@@ -77,5 +77,42 @@ describe("escapeForAppleScript", () => {
     // Input: """\\  (three quotes and two backslashes)
     // Output: \"\"\"\\\\  (escaped quotes and backslashes)
     expect(escapeForAppleScript('"""' + "\\\\" + "")).toBe('\\"\\"\\"\\\\\\\\');
+  });
+});
+
+describe("parseRecipients", () => {
+  it("parses single email address", () => {
+    const result = parseRecipients("test@example.com");
+    expect(result).toHaveLength(1);
+    expect(result[0].address).toBe("test@example.com");
+    expect(result[0].name).toBe("test");
+  });
+
+  it("parses multiple comma-separated addresses", () => {
+    const result = parseRecipients("a@example.com, b@example.com, c@example.com");
+    expect(result).toHaveLength(3);
+    expect(result[0].address).toBe("a@example.com");
+    expect(result[1].address).toBe("b@example.com");
+    expect(result[2].address).toBe("c@example.com");
+  });
+
+  it("trims whitespace from addresses", () => {
+    const result = parseRecipients("  a@example.com  ,   b@example.com   ");
+    expect(result).toHaveLength(2);
+    expect(result[0].address).toBe("a@example.com");
+    expect(result[1].address).toBe("b@example.com");
+  });
+
+  it("extracts name from display format", () => {
+    const result = parseRecipients("John Doe <john@example.com>");
+    expect(result).toHaveLength(1);
+    expect(result[0].address).toBe("John Doe <john@example.com>");
+    expect(result[0].name).toBe("John Doe");
+  });
+
+  it("extracts name from plain email", () => {
+    const result = parseRecipients("john.doe@example.com");
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe("john.doe");
   });
 });
