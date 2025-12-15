@@ -87,10 +87,10 @@ Make sure to replace `YOURUSERNAME` with your actual macOS username and adjust t
 | `unread` | `folder`, `limit` | Get unread emails |
 | `search` | `searchTerm`, `folder`, `limit`, `startDate?`, `endDate?` | Search by content or subject |
 | `send` | `to`, `subject`, `body`, `cc?`, `bcc?`, `isHtml?`, `attachments?` | Send an email |
-| `reply` | `messageId`, `body`, `isHtml?` | Reply to an email |
-| `replyAll` | `messageId`, `body`, `isHtml?` | Reply-all to an email |
-| `forward` | `messageId`, `to`, `cc?`, `comment?`, `attachments?`, `includeOriginalAttachments?` | Forward an email |
-| `create_draft` | `to`, `subject`, `body`, `cc?`, `bcc?`, `isHtml?`, `attachments?` | Create draft (opens in Outlook) |
+| `reply` | `messageId`, `replyBody`, `replyAll?`, `isHtml?`, `attachments?`, `replyTo?`, `replyCc?`, `replyBcc?`, `addTo?`, `addCc?`, `addBcc?`, `removeTo?`, `removeCc?`, `removeBcc?` | Reply with full recipient control |
+| `forward` | `messageId`, `forwardTo`, `forwardCc?`, `forwardBcc?`, `forwardComment?`, `attachments?`, `includeOriginalAttachments?` | Forward an email |
+| `draft` | `to`, `subject`, `body`, `cc?`, `bcc?`, `isHtml?`, `attachments?`, `replyToMessageId?` | Create draft (or reply draft with replyToMessageId) |
+| `empty_trash` | `preview?`, `confirm?` | Empty Deleted Items (two-phase: preview then confirm) |
 | `move` | `messageId`, `targetFolder` | Move email to folder |
 | `count` | `folder` | Count emails in folder |
 | `save_attachments` | `messageId`, `destinationFolder` | Save attachments to disk |
@@ -220,6 +220,24 @@ Work (user@example.com) - 18 emails, 2 unread
 Work/Projects (user@example.com) - 12 emails
 Work/Projects/Active (user@example.com) - 8 emails, 1 unread
 ```
+
+## Changelog
+
+### 2025-12-15
+
+**New Features:**
+- **Auto-detect HTML in email body** - When `isHtml` is not provided, the body is automatically scanned for HTML tags (`<p>`, `<div>`, `<br>`, etc.) and rendered appropriately. Explicit `isHtml` parameter still works as an override.
+- **Empty trash operation** - New `empty_trash` operation with two-phase safety: `preview: true` shows item count, date range, and size; `confirm: true` permanently deletes items.
+- **Reply draft support** - The `draft` operation now accepts `replyToMessageId` to create threaded reply drafts that preserve conversation threading.
+- **Enhanced reply recipients** - 9 new parameters for the `reply` operation: `replyTo`, `replyCc`, `replyBcc` (override), `addTo`, `addCc`, `addBcc` (append), `removeTo`, `removeCc`, `removeBcc` (remove from recipients).
+- **Forward BCC support** - Added `forwardBcc` parameter to the `forward` operation for complete recipient control.
+- **Hierarchical folder listing** - New `list_folders` operation returns full folder paths with account info, special folder markers, and optional email counts.
+
+**Bug Fixes:**
+- **Fixed recipient parsing** - All TO, CC, and BCC fields now properly parse comma-separated addresses into individual recipients using the `parseRecipients()` helper.
+- **Accurate status messages** - Changed "sent successfully" to "queued for delivery" for send/reply/forward operations to accurately reflect Outlook's async behavior.
+
+---
 
 ## Troubleshooting
 
