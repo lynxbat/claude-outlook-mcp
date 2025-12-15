@@ -547,6 +547,62 @@ Return actual operation result:
 
 ---
 
+# Feature Request: Auto-Detect HTML in Email Body
+
+**STATUS: IMPLEMENTED** - When `isHtml` is not explicitly provided, the body is automatically scanned for HTML tags.
+
+## Problem
+
+When sending emails, if the body contains HTML tags but `isHtml` is not set to `true`, Outlook renders the literal tags as text:
+
+**Sent:**
+```javascript
+{
+  operation: "send",
+  body: "<p>Hello,</p><p>Please review the attached.</p>",
+  isHtml: false  // default
+}
+```
+
+**Displayed in Outlook:**
+```
+<p>Hello,</p><p>Please review the attached.</p>
+```
+
+This is a common mistake that results in malformed emails.
+
+## Proposed Solution: Auto-Detect HTML
+
+Automatically detect HTML content and set the appropriate mode:
+
+```typescript
+// In sendEmail(), replyToEmail(), forwardEmail(), createDraft():
+const htmlPattern = /<(p|div|br|span|table|ul|ol|li|h[1-6]|a|b|i|strong|em|img|hr)[>\s\/]/i;
+const looksLikeHtml = htmlPattern.test(body);
+const useHtml = isHtml ?? looksLikeHtml;  // Use explicit isHtml if provided, otherwise auto-detect
+```
+
+## Behavior
+
+| `isHtml` param | Body contains HTML | Result |
+|----------------|-------------------|--------|
+| `true` | any | HTML mode |
+| `false` | any | Plain text mode (tags shown literally) |
+| not provided | yes | HTML mode (auto-detected) |
+| not provided | no | Plain text mode |
+
+## Benefits
+
+- Prevents accidental malformed emails
+- Backward compatible (explicit `isHtml` still works)
+- Matches user intent automatically
+
+## Priority
+
+**Medium** - Quality of life improvement that prevents common mistakes.
+
+---
+
 # Feature Request: Empty Deleted Items / Permanent Delete
 
 **STATUS: IMPLEMENTED** - The `empty_trash` operation with two-phase safety (preview/confirm).
