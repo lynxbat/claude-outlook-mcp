@@ -850,18 +850,8 @@ async function createDraft(
 
   await checkOutlookAccess();
 
-  // Extract name from email if possible (for display name)
-  const extractNameFromEmail = (email: string): string => {
-    const namePart = email.split('@')[0];
-    return namePart
-      .split('.')
-      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(' ');
-  };
-
-  const toName = extractNameFromEmail(to);
-
-  // Parse CC/BCC recipients using shared helper
+  // Parse TO/CC/BCC recipients using shared helper
+  const toRecipients = parseRecipients(to);
   const ccRecipients = cc ? parseRecipients(cc) : [];
   const bccRecipients = bcc ? parseRecipients(bcc) : [];
 
@@ -965,9 +955,9 @@ async function createDraft(
         }
 
         tell newMessage
-          make new to recipient with properties {email address:{name:"${toName}", address:"${to}"}}
-          ${ccRecipients.map(r => `make new cc recipient with properties {email address:{name:"${r.name}", address:"${r.address}"}}`).join('\n          ')}
-          ${bccRecipients.map(r => `make new bcc recipient with properties {email address:{name:"${r.name}", address:"${r.address}"}}`).join('\n          ')}
+          ${toRecipients.map(r => `make new to recipient with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n          ')}
+          ${ccRecipients.map(r => `make new cc recipient with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n          ')}
+          ${bccRecipients.map(r => `make new bcc recipient with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n          ')}
         end tell
 
         ${attachmentScript}
@@ -1278,7 +1268,7 @@ async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: st
   await checkOutlookAccess();
 
   const escapedComment = forwardComment ? escapeForAppleScript(forwardComment) : "";
-  const escapedTo = escapeForAppleScript(forwardTo);
+  const toRecipients = parseRecipients(forwardTo);
   const ccRecipients = forwardCc ? parseRecipients(forwardCc) : [];
   const bccRecipients = forwardBcc ? parseRecipients(forwardBcc) : [];
 
@@ -1332,7 +1322,7 @@ async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: st
 
         -- Add recipients
         tell fwdMsg
-          make new to recipient with properties {email address:{address:"${escapedTo}"}}
+          ${toRecipients.map(r => `make new to recipient with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n          ')}
           ${ccRecipients.map(r => `make new cc recipient with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n          ')}
           ${bccRecipients.map(r => `make new bcc recipient with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n          ')}
         end tell
@@ -1351,7 +1341,7 @@ async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: st
         -- Send the forward
         send fwdMsg
 
-        return "Forward queued for delivery to ${escapedTo}${processedAttachments.length > 0 ? ` with ${processedAttachments.length} new attachment(s)` : ''}${!includeOriginalAttachments ? ' (original attachments removed)' : ''}"
+        return "Forward queued for delivery to ${escapeForAppleScript(forwardTo)}${processedAttachments.length > 0 ? ` with ${processedAttachments.length} new attachment(s)` : ''}${!includeOriginalAttachments ? ' (original attachments removed)' : ''}"
       on error errMsg
         return "Error: " & errMsg
       end try
