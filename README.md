@@ -95,6 +95,7 @@ Make sure to replace `YOURUSERNAME` with your actual macOS username and adjust t
 | `count` | `folder` | Count emails in folder |
 | `save_attachments` | `messageId`, `destinationFolder` | Save attachments to disk |
 | `folders` | — | List all mail folders |
+| `list_folders` | `includeCounts?`, `excludeDeleted?`, `account?` | List all folders with full paths and metadata |
 | `create_folder` | `name`, `parent?` | Create a folder |
 | `rename_folder` | `path`, `newName` | Rename a folder |
 | `delete_folder` | `path` | Delete a folder |
@@ -196,6 +197,28 @@ What meetings do I have tomorrow?
   "messageId": "12345",
   "targetFolder": "Work/Projects/Active"
 }
+```
+
+**List all folders with counts:**
+```json
+{
+  "operation": "list_folders",
+  "includeCounts": true,
+  "excludeDeleted": true
+}
+```
+
+Example output:
+```
+Found 15 folders:
+
+Inbox (user@example.com) [inbox] - 42 emails, 5 unread
+Sent Items (user@example.com) [sent] - 128 emails
+Drafts (user@example.com) [drafts] - 3 emails
+Archive (user@example.com) [archive] - 234 emails
+Work (user@example.com) - 18 emails, 2 unread
+Work/Projects (user@example.com) - 12 emails
+Work/Projects/Active (user@example.com) - 8 emails, 1 unread
 ```
 
 ## Troubleshooting
