@@ -485,7 +485,7 @@ async function searchEmails(searchTerm: string, folder: string = "Inbox", limit:
   console.error(`[searchEmails] Searching for "${searchTerm}" in folder: ${folder}, limit: ${limit}, startDate: ${startDate}, endDate: ${endDate}`);
   await checkOutlookAccess();
 
-  const folderRef = buildFolderRef(folder);
+  const folderRef = buildNestedFolderRef(folder);
 
   // Build date filter AppleScript code
   let dateFilterSetup = "";
@@ -1813,7 +1813,7 @@ async function countEmails(folder: string = "Inbox"): Promise<string> {
   console.error(`[countEmails] Counting emails in folder: ${folder}`);
   await checkOutlookAccess();
 
-  const folderRef = buildFolderRef(folder);
+  const folderRef = buildNestedFolderRef(folder);
 
   const script = `
     tell application "Microsoft Outlook"
@@ -1886,7 +1886,7 @@ async function readEmails(folder: string = "Inbox", limit: number = 10, startDat
     console.error(`[readEmails] Reading emails from folder: ${folder}, limit: ${limit}, startDate: ${startDate}, endDate: ${endDate}`);
     await checkOutlookAccess();
 
-    const folderRef = buildFolderRef(folder);
+    const folderRef = buildNestedFolderRef(folder);
 
     // Build date filter AppleScript code
     let dateFilterSetup = "";
