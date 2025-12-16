@@ -223,6 +223,11 @@ Work/Projects/Active (user@example.com) - 8 emails, 1 unread
 
 ## Changelog
 
+### 2025-12-16
+
+**Bug Fixes:**
+- **Fixed Method 3 recipient parsing** - The fallback draft method for sending emails with attachments now correctly parses multiple recipients instead of treating them as a single malformed address.
+
 ### 2025-12-15
 
 **New Features:**
