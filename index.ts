@@ -793,9 +793,9 @@ async function sendEmail(
                 `set plain text content of newMessage to "${escapedBody}"`
               }
               
-              set to recipients of newMessage to {"${to}"}
-              ${cc ? `set cc recipients of newMessage to {"${cc}"}` : ''}
-              ${bcc ? `set bcc recipients of newMessage to {"${bcc}"}` : ''}
+              ${toRecipients.map(r => `make new to recipient at newMessage with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n              ')}
+              ${ccRecipients.map(r => `make new cc recipient at newMessage with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n              ')}
+              ${bccRecipients.map(r => `make new bcc recipient at newMessage with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n              ')}
               
               ${processedAttachments.map(filePath => {
                 const escapedPath = filePath.replace(/"/g, '\\"');

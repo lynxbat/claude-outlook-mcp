@@ -722,3 +722,80 @@ end tell
 ## Priority
 
 Medium - Nice to have for mailbox hygiene, but users can do this manually in Outlook.
+
+---
+
+# Bug: Method 3 Fallback Does Not Parse Multiple Recipients
+
+**STATUS: FIXED** - Method 3 now uses `parseRecipients()` and `escapeForAppleScript()` like Methods 1 and 2.
+
+**Reported:** 2025-12-16
+
+## Problem
+
+When the `send` operation falls back to Method 3 (draft creation with attachments), comma-separated recipients are treated as a single malformed address instead of being parsed into individual recipients.
+
+## Evidence
+
+Sending email with:
+```javascript
+{
+  operation: "send",
+  to: "Paul@gnc-hq.com, Alison@gnc-hq.com, Theresa@gnc-hq.com, Nick@gnc-hq.com",
+  subject: "SFS Report - Weekly Summary",
+  attachments: ["/path/to/report1.pdf", "/path/to/report2.pdf"]
+}
+```
+
+**Expected:** Four separate recipients in the TO field
+**Actual:** One malformed recipient: `Paul@gnc-hq.com, Alison@gnc-hq.com, Theresa@gnc-hq.com, Nick@gnc-hq.com`
+
+Outlook shows red error indicator on the TO field because it's an invalid email address.
+
+## Root Cause
+
+In `index.ts`, Methods 1 and 2 correctly use `parseRecipients()`:
+
+```typescript
+// Line 645 - Method 1 & 2 (correct)
+const toRecipients = parseRecipients(to);
+const ccRecipients = cc ? parseRecipients(cc) : [];
+const bccRecipients = bcc ? parseRecipients(bcc) : [];
+```
+
+But Method 3 (fallback for attachments) at line 796 does NOT:
+
+```typescript
+// Line 796 - Method 3 (BUG)
+set to recipients of newMessage to {"${to}"}
+${cc ? `set cc recipients of newMessage to {"${cc}"}` : ''}
+${bcc ? `set bcc recipients of newMessage to {"${bcc}"}` : ''}
+```
+
+The raw comma-separated string is passed directly instead of being parsed into individual recipients.
+
+## Fix
+
+Method 3 should use `parseRecipients()` and create individual recipients like Methods 1 and 2:
+
+```typescript
+// Parse recipients at the start of Method 3
+const toRecipients = parseRecipients(to);
+const ccRecipients = cc ? parseRecipients(cc) : [];
+const bccRecipients = bcc ? parseRecipients(bcc) : [];
+
+// Then in the AppleScript:
+${toRecipients.map(r => `make new to recipient at newMessage with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n              ')}
+${ccRecipients.map(r => `make new cc recipient at newMessage with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n              ')}
+${bccRecipients.map(r => `make new bcc recipient at newMessage with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n              ')}
+```
+
+## Trigger Condition
+
+Method 3 is triggered when Methods 1 and 2 fail. This commonly happens when:
+- Sending with attachments
+- Certain Outlook configurations
+
+## Priority
+
+**High** - This breaks all multi-recipient emails that fall back to Method 3, which is common when attachments are involved.
