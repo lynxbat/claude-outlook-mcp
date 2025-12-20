@@ -126,43 +126,43 @@ const OUTLOOK_MAIL_TOOL: Tool = {
       },
       replyAll: {
         type: "boolean",
-        description: "Whether to reply to all recipients (optional for reply operation, default: false)"
+        description: "Whether to reply to all recipients (optional for reply or draft operation with replyToMessageId, default: false)"
       },
       replyTo: {
         type: "string",
-        description: "Override TO recipients for reply (comma-separated emails). Cannot be used with addTo/removeTo."
+        description: "Override TO recipients for reply or draft (comma-separated emails). Cannot be used with addTo/removeTo."
       },
       replyCc: {
         type: "string",
-        description: "Override CC recipients for reply (comma-separated emails). Cannot be used with addCc/removeCc."
+        description: "Override CC recipients for reply or draft (comma-separated emails). Cannot be used with addCc/removeCc."
       },
       replyBcc: {
         type: "string",
-        description: "Override BCC recipients for reply (comma-separated emails). Cannot be used with addBcc/removeBcc."
+        description: "Override BCC recipients for reply or draft (comma-separated emails). Cannot be used with addBcc/removeBcc."
       },
       addTo: {
         type: "string",
-        description: "Add to TO recipients for reply (comma-separated emails). Cannot be used with replyTo."
+        description: "Add to TO recipients for reply or draft (comma-separated emails). Cannot be used with replyTo."
       },
       addCc: {
         type: "string",
-        description: "Add to CC recipients for reply (comma-separated emails). Cannot be used with replyCc."
+        description: "Add to CC recipients for reply or draft (comma-separated emails). Cannot be used with replyCc."
       },
       addBcc: {
         type: "string",
-        description: "Add to BCC recipients for reply (comma-separated emails). Cannot be used with replyBcc."
+        description: "Add to BCC recipients for reply or draft (comma-separated emails). Cannot be used with replyBcc."
       },
       removeTo: {
         type: "string",
-        description: "Remove from TO recipients for reply (comma-separated emails). Cannot be used with replyTo."
+        description: "Remove from TO recipients for reply or draft (comma-separated emails). Cannot be used with replyTo."
       },
       removeCc: {
         type: "string",
-        description: "Remove from CC recipients for reply (comma-separated emails). Cannot be used with replyCc."
+        description: "Remove from CC recipients for reply or draft (comma-separated emails). Cannot be used with replyCc."
       },
       removeBcc: {
         type: "string",
-        description: "Remove from BCC recipients for reply (comma-separated emails). Cannot be used with replyBcc."
+        description: "Remove from BCC recipients for reply or draft (comma-separated emails). Cannot be used with replyBcc."
       },
       replyToMessageId: {
         type: "string",
@@ -845,13 +845,39 @@ async function createDraft(
   bcc?: string,
   isHtml?: boolean,
   attachments?: string[],
-  replyToMessageId?: string
+  replyToMessageId?: string,
+  replyAll?: boolean,
+  recipientOptions?: {
+    replyTo?: string;
+    replyCc?: string;
+    replyBcc?: string;
+    addTo?: string;
+    addCc?: string;
+    addBcc?: string;
+    removeTo?: string;
+    removeCc?: string;
+    removeBcc?: string;
+  }
 ): Promise<string> {
   console.error(`[createDraft] Creating draft to: ${to}, subject: "${subject}"`);
   console.error(`[createDraft] Attachments: ${attachments ? JSON.stringify(attachments) : 'none'}`);
-  console.error(`[createDraft] Reply to message ID: ${replyToMessageId || 'none'}`);
+  console.error(`[createDraft] Reply to message ID: ${replyToMessageId || 'none'}, replyAll: ${replyAll || false}`);
+  console.error(`[createDraft] Recipient options: ${recipientOptions ? JSON.stringify(recipientOptions) : 'none'}`);
 
   await checkOutlookAccess();
+
+  // Validate conflicting recipient parameters (same as replyEmail)
+  if (recipientOptions) {
+    if (recipientOptions.replyTo && (recipientOptions.addTo || recipientOptions.removeTo)) {
+      return "Error: Cannot use replyTo with addTo or removeTo";
+    }
+    if (recipientOptions.replyCc && (recipientOptions.addCc || recipientOptions.removeCc)) {
+      return "Error: Cannot use replyCc with addCc or removeCc";
+    }
+    if (recipientOptions.replyBcc && (recipientOptions.addBcc || recipientOptions.removeBcc)) {
+      return "Error: Cannot use replyBcc with addBcc or removeBcc";
+    }
+  }
 
   // Auto-detect HTML if isHtml not explicitly provided
   const useHtml = isHtml ?? detectHtml(body);
@@ -893,11 +919,137 @@ async function createDraft(
       }).join('\n')
       : '';
 
+    // Build reply command based on replyAll flag
+    const replyCommand = replyAll ? "reply to theMsg with reply to all" : "reply to theMsg";
+
+    // Build recipient modification script (same pattern as replyEmail)
+    let recipientScript = '';
+    if (recipientOptions) {
+      const { replyTo, replyCc, replyBcc, addTo, addCc, addBcc, removeTo, removeCc, removeBcc } = recipientOptions;
+
+      // Handle TO recipients
+      if (replyTo) {
+        // Override: clear all TO and add new ones
+        const toRecips = parseRecipients(replyTo);
+        recipientScript += `
+          -- Override TO recipients
+          delete every to recipient of replyMsg
+          ${toRecips.map(r => `make new to recipient at replyMsg with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n          ')}
+        `;
+      } else {
+        // Add TO recipients
+        if (addTo) {
+          const toRecips = parseRecipients(addTo);
+          recipientScript += `
+          -- Add TO recipients
+          ${toRecips.map(r => `make new to recipient at replyMsg with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n          ')}
+          `;
+        }
+        // Remove TO recipients
+        if (removeTo) {
+          const removeAddresses = parseRecipients(removeTo).map(r => r.address.toLowerCase());
+          recipientScript += `
+          -- Remove TO recipients
+          set toRecipientsToRemove to {${removeAddresses.map(a => `"${escapeForAppleScript(a)}"`).join(', ')}}
+          set existingTo to to recipients of replyMsg
+          repeat with recipient in existingTo
+            set recipientAddr to address of email address of recipient
+            repeat with removeAddr in toRecipientsToRemove
+              if recipientAddr is removeAddr then
+                delete recipient
+                exit repeat
+              end if
+            end repeat
+          end repeat
+          `;
+        }
+      }
+
+      // Handle CC recipients
+      if (replyCc) {
+        // Override: clear all CC and add new ones
+        const ccRecips = parseRecipients(replyCc);
+        recipientScript += `
+          -- Override CC recipients
+          delete every cc recipient of replyMsg
+          ${ccRecips.map(r => `make new cc recipient at replyMsg with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n          ')}
+        `;
+      } else {
+        // Add CC recipients
+        if (addCc) {
+          const ccRecips = parseRecipients(addCc);
+          recipientScript += `
+          -- Add CC recipients
+          ${ccRecips.map(r => `make new cc recipient at replyMsg with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n          ')}
+          `;
+        }
+        // Remove CC recipients
+        if (removeCc) {
+          const removeAddresses = parseRecipients(removeCc).map(r => r.address.toLowerCase());
+          recipientScript += `
+          -- Remove CC recipients
+          set ccRecipientsToRemove to {${removeAddresses.map(a => `"${escapeForAppleScript(a)}"`).join(', ')}}
+          set existingCc to cc recipients of replyMsg
+          repeat with recipient in existingCc
+            set recipientAddr to address of email address of recipient
+            repeat with removeAddr in ccRecipientsToRemove
+              if recipientAddr is removeAddr then
+                delete recipient
+                exit repeat
+              end if
+            end repeat
+          end repeat
+          `;
+        }
+      }
+
+      // Handle BCC recipients
+      if (replyBcc) {
+        // Override: clear all BCC and add new ones
+        const bccRecips = parseRecipients(replyBcc);
+        recipientScript += `
+          -- Override BCC recipients
+          delete every bcc recipient of replyMsg
+          ${bccRecips.map(r => `make new bcc recipient at replyMsg with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n          ')}
+        `;
+      } else {
+        // Add BCC recipients
+        if (addBcc) {
+          const bccRecips = parseRecipients(addBcc);
+          recipientScript += `
+          -- Add BCC recipients
+          ${bccRecips.map(r => `make new bcc recipient at replyMsg with properties {email address:{name:"${escapeForAppleScript(r.name)}", address:"${escapeForAppleScript(r.address)}"}}`).join('\n          ')}
+          `;
+        }
+        // Remove BCC recipients
+        if (removeBcc) {
+          const removeAddresses = parseRecipients(removeBcc).map(r => r.address.toLowerCase());
+          recipientScript += `
+          -- Remove BCC recipients
+          set bccRecipientsToRemove to {${removeAddresses.map(a => `"${escapeForAppleScript(a)}"`).join(', ')}}
+          set existingBcc to bcc recipients of replyMsg
+          repeat with recipient in existingBcc
+            set recipientAddr to address of email address of recipient
+            repeat with removeAddr in bccRecipientsToRemove
+              if recipientAddr is removeAddr then
+                delete recipient
+                exit repeat
+              end if
+            end repeat
+          end repeat
+          `;
+        }
+      }
+    }
+
     const replyScript = `
       tell application "Microsoft Outlook"
         try
           set theMsg to message id ${replyToMessageId}
-          set replyMsg to reply to theMsg without opening window
+          set replyMsg to ${replyCommand} without opening window
+
+          -- Modify recipients if specified
+          ${recipientScript}
 
           -- Set the reply content (prepend to existing quoted content)
           ${useHtml ? `
@@ -3160,7 +3312,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
 
             console.error(`[CallTool] Create draft with attachments: ${args.attachments ? JSON.stringify(args.attachments) : 'none'}`);
-            console.error(`[CallTool] Reply to message ID: ${args.replyToMessageId || 'none'}`);
+            console.error(`[CallTool] Reply to message ID: ${args.replyToMessageId || 'none'}, replyAll: ${args.replyAll || false}`);
+
+            // Build recipient options for reply drafts (same structure as reply operation)
+            const draftRecipientOptions = (args.replyToMessageId && (
+              args.replyTo || args.replyCc || args.replyBcc ||
+              args.addTo || args.addCc || args.addBcc ||
+              args.removeTo || args.removeCc || args.removeBcc
+            )) ? {
+              replyTo: args.replyTo,
+              replyCc: args.replyCc,
+              replyBcc: args.replyBcc,
+              addTo: args.addTo,
+              addCc: args.addCc,
+              addBcc: args.addBcc,
+              removeTo: args.removeTo,
+              removeCc: args.removeCc,
+              removeBcc: args.removeBcc,
+            } : undefined;
 
             const draftResult = await createDraft(
               args.to || "",
@@ -3170,7 +3339,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               args.bcc,
               args.isHtml,
               args.attachments,
-              args.replyToMessageId
+              args.replyToMessageId,
+              args.replyAll,
+              draftRecipientOptions
             );
 
             return {

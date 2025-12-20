@@ -1,7 +1,7 @@
 # Design: Reply-All Support for Draft Operation
 
 **Date:** 2025-12-20
-**Status:** Approved
+**Status:** Implemented
 
 ## Problem
 

@@ -799,3 +799,209 @@ Method 3 is triggered when Methods 1 and 2 fail. This commonly happens when:
 ## Priority
 
 **High** - This breaks all multi-recipient emails that fall back to Method 3, which is common when attachments are involved.
+
+---
+
+# Feature Request: Reply-All Support for Draft Operation
+
+**STATUS: IMPLEMENTED** (2025-12-20)
+
+**Reported:** 2025-12-20
+
+## Problem
+
+The `draft` operation with `replyToMessageId` creates a reply draft that only includes the original sender as the recipient. It does not support reply-all behavior or recipient customization, even when `to`, `cc`, or `bcc` parameters are provided.
+
+This is a significant gap because:
+1. The `reply` operation has full recipient control (`replyAll`, `addTo`, `addCc`, `replyTo`, etc.) but **sends immediately**
+2. The `draft` operation can create drafts for review but **ignores recipient parameters** when `replyToMessageId` is used
+3. Users who need to review/edit before sending cannot create threaded reply-all drafts
+
+## Use Case
+
+User receives an email from Bill with Jenna, Alison, and Tara on CC. User wants to:
+1. Create a reply draft (not send immediately)
+2. Reply to all recipients (Bill + Jenna + Alison + Tara)
+3. Maintain thread continuity (proper threading headers)
+4. Review and potentially edit before sending
+
+This is standard email workflow - reply-all to a group, but draft first.
+
+## Current Behavior
+
+```javascript
+// Request - attempting reply-all draft
+{
+  operation: "draft",
+  replyToMessageId: "10791",
+  to: "bill@logicsource.com, jenna@gnc-hq.com, alison@gnc-hq.com, tara@gnc-hq.com",
+  cc: "jenna@gnc-hq.com, alison@gnc-hq.com, tara@gnc-hq.com",  // also tried cc
+  body: "<p>Thanks for the analysis...</p>",
+  isHtml: true
+}
+
+// Result:
+// - Draft created with thread preserved ✓
+// - TO field: bill@logicsource.com ONLY ✗
+// - CC field: EMPTY ✗
+// - `to` and `cc` parameters completely ignored
+```
+
+## Root Cause
+
+In `index.ts`, the `createDraft` function (line ~880) handles `replyToMessageId` with this AppleScript:
+
+```applescript
+set theMsg to message id ${replyToMessageId}
+set replyMsg to reply to theMsg without opening window
+```
+
+This uses Outlook's `reply to` command which:
+1. Creates a reply to the **sender only** (not reply-all)
+2. Ignores any `to`/`cc`/`bcc` parameters passed to the function
+3. Does not support `reply to all` variant
+
+The `to`, `cc`, `bcc` parameters are passed to `createDraft()` at line 3165-3173 but never used when `replyToMessageId` is provided.
+
+## Proposed Solution
+
+### Option 1: Add `replyAll` Parameter to Draft Operation
+
+Support `replyAll: true` when creating reply drafts:
+
+```javascript
+{
+  operation: "draft",
+  replyToMessageId: "10791",
+  replyAll: true,  // NEW - use "reply to all" instead of "reply to"
+  body: "..."
+}
+```
+
+**AppleScript change:**
+
+```applescript
+-- Current (reply to sender only)
+set replyMsg to reply to theMsg without opening window
+
+-- With replyAll: true (reply to all recipients)
+set replyMsg to reply to theMsg with reply to all without opening window
+```
+
+### Option 2: Add Recipient Override Parameters to Draft Operation
+
+Mirror the `reply` operation's recipient control:
+
+```javascript
+{
+  operation: "draft",
+  replyToMessageId: "10791",
+  replyAll: true,           // Start with all original recipients
+  addCc: "extra@example.com",  // Add someone
+  removeTo: "remove@example.com",  // Remove someone
+  body: "..."
+}
+```
+
+This would require modifying recipients after draft creation using AppleScript.
+
+### Option 3: Full Recipient Override
+
+Allow complete override of recipients on reply drafts:
+
+```javascript
+{
+  operation: "draft",
+  replyToMessageId: "10791",
+  to: "bill@logicsource.com",  // Override TO
+  cc: "jenna@gnc-hq.com, alison@gnc-hq.com",  // Override CC
+  body: "..."
+}
+```
+
+**AppleScript approach:**
+
+```applescript
+set theMsg to message id ${replyToMessageId}
+set replyMsg to reply to theMsg without opening window
+
+-- Clear default recipients and set custom ones
+delete every recipient of replyMsg
+make new to recipient at replyMsg with properties {email address:{address:"bill@logicsource.com"}}
+make new cc recipient at replyMsg with properties {email address:{address:"jenna@gnc-hq.com"}}
+-- etc.
+```
+
+## Recommended Implementation
+
+**Phase 1 (Minimum Viable):** Add `replyAll: true` support to draft operation
+- Simplest change - just add `with reply to all` to the AppleScript command
+- Covers 90% of use cases
+
+**Phase 2 (Full Parity):** Add recipient modification parameters
+- `addTo`, `addCc`, `addBcc` (append to reply-all recipients)
+- `removeTo`, `removeCc`, `removeBcc` (remove from reply-all recipients)
+- Matches existing `reply` operation parameters
+
+## Test Cases
+
+### Test Case 1: Basic Reply-All Draft
+
+**Setup:** Email from bill@external.com with alice@internal.com and bob@internal.com on CC
+
+**Request:**
+```javascript
+{
+  operation: "draft",
+  replyToMessageId: "12345",
+  replyAll: true,
+  body: "Thanks everyone."
+}
+```
+
+**Expected:**
+- Draft created in thread ✓
+- TO: bill@external.com
+- CC: alice@internal.com, bob@internal.com
+- Subject: "Re: Original Subject"
+
+### Test Case 2: Reply-All with Additional CC
+
+**Request:**
+```javascript
+{
+  operation: "draft",
+  replyToMessageId: "12345",
+  replyAll: true,
+  addCc: "manager@internal.com",
+  body: "Adding manager for visibility."
+}
+```
+
+**Expected:**
+- TO: bill@external.com
+- CC: alice@internal.com, bob@internal.com, manager@internal.com
+
+### Test Case 3: Reply-All with Recipient Removed
+
+**Request:**
+```javascript
+{
+  operation: "draft",
+  replyToMessageId: "12345",
+  replyAll: true,
+  removeCc: "bob@internal.com",
+  body: "Removing Bob from this thread."
+}
+```
+
+**Expected:**
+- TO: bill@external.com
+- CC: alice@internal.com (bob removed)
+
+## Priority
+
+**High** - This is a fundamental email workflow gap. Users cannot create reply-all drafts for review, forcing them to either:
+1. Send immediately without review (risky for important emails)
+2. Manually add recipients in Outlook after draft creation (defeats automation purpose)
+3. Create new emails that break threading (poor UX for recipients)
