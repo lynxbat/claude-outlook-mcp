@@ -12,6 +12,109 @@ import { parseEmailOutput, buildFolderRef, buildNestedFolderRef, buildFolderSear
 // Re-export helpers for testing
 export { parseEmailOutput, buildFolderRef, buildNestedFolderRef, escapeForAppleScript, parseRecipients } from './helpers';
 
+// ====================================================
+// Safety Confirmation Dialogs
+// ====================================================
+
+/**
+ * Show a confirmation dialog for dangerous operations.
+ * Returns true if user confirmed, false if cancelled.
+ */
+async function confirmAction(title: string, message: string): Promise<boolean> {
+  const escapedTitle = title.replace(/"/g, '\\"');
+  const escapedMessage = message.replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  
+  const script = `
+    tell application "System Events"
+      activate
+      set userChoice to display dialog "${escapedMessage}" with title "${escapedTitle}" buttons {"Cancel", "Confirm"} default button "Cancel" cancel button "Cancel" with icon caution
+      return button returned of userChoice
+    end tell
+  `;
+  
+  try {
+    const result = await runAppleScript(script);
+    return result === "Confirm";
+  } catch (error) {
+    // User clicked Cancel or closed the dialog
+    console.error("[confirmAction] User cancelled or dialog failed:", error);
+    return false;
+  }
+}
+
+/**
+ * Show an email preview dialog before sending.
+ * Returns true if user confirmed, false if cancelled.
+ */
+async function confirmEmailSend(
+  operation: "send" | "reply" | "forward",
+  to: string,
+  subject: string,
+  body: string,
+  cc?: string,
+  bcc?: string
+): Promise<boolean> {
+  const maxBodyLength = 500;
+  const truncatedBody = body.length > maxBodyLength 
+    ? body.substring(0, maxBodyLength) + "\\n\\n[... truncated ...]" 
+    : body;
+  
+  // Build preview text
+  let preview = `To: ${to}`;
+  if (cc) preview += `\\nCC: ${cc}`;
+  if (bcc) preview += `\\nBCC: ${bcc}`;
+  preview += `\\nSubject: ${subject}`;
+  preview += `\\n\\n--- Message Preview ---\\n${truncatedBody}`;
+  
+  const operationText = operation === "send" ? "Send this email?" 
+    : operation === "reply" ? "Send this reply?" 
+    : "Forward this email?";
+  
+  const escapedPreview = preview
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n');
+  
+  const script = `
+    tell application "System Events"
+      activate
+      set userChoice to display dialog "${escapedPreview}" with title "${operationText}" buttons {"Cancel", "Send"} default button "Cancel" cancel button "Cancel" with icon caution
+      return button returned of userChoice
+    end tell
+  `;
+  
+  try {
+    const result = await runAppleScript(script);
+    return result === "Send";
+  } catch (error) {
+    console.error("[confirmEmailSend] User cancelled or dialog failed:", error);
+    return false;
+  }
+}
+
+/**
+ * Show confirmation for trash emptying with item count.
+ */
+async function confirmEmptyTrash(itemCount: number): Promise<boolean> {
+  const message = `You are about to permanently delete ${itemCount} item(s) from the trash.\\n\\nThis action cannot be undone!`;
+  
+  const script = `
+    tell application "System Events"
+      activate
+      set userChoice to display dialog "${message}" with title "Empty Trash?" buttons {"Cancel", "Delete All"} default button "Cancel" cancel button "Cancel" with icon stop
+      return button returned of userChoice
+    end tell
+  `;
+  
+  try {
+    const result = await runAppleScript(script);
+    return result === "Delete All";
+  } catch (error) {
+    console.error("[confirmEmptyTrash] User cancelled or dialog failed:", error);
+    return false;
+  }
+}
+
 // Folder info type for list_folders operation
 interface FolderInfo {
   path: string[];
@@ -625,6 +728,13 @@ async function sendEmail(
   console.error(`[sendEmail] Attachments: ${attachments ? JSON.stringify(attachments) : 'none'}`);
 
   await checkOutlookAccess();
+
+  // Show confirmation dialog with email preview
+  const confirmed = await confirmEmailSend("send", to, subject, body, cc, bcc);
+  if (!confirmed) {
+    console.error("[sendEmail] User cancelled the operation");
+    return "Email sending cancelled by user.";
+  }
 
   // Auto-detect HTML if isHtml not explicitly provided
   const useHtml = isHtml ?? detectHtml(body);
@@ -1422,6 +1532,32 @@ async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: st
   console.error(`[forwardEmail] Include original attachments: ${includeOriginalAttachments}`);
   await checkOutlookAccess();
 
+  // Get original message subject for confirmation dialog
+  const getOriginalScript = `
+    tell application "Microsoft Outlook"
+      set theMsg to message id ${messageId}
+      return subject of theMsg
+    end tell
+  `;
+  
+  let originalSubject = "Unknown";
+  try {
+    originalSubject = await runAppleScript(getOriginalScript);
+  } catch (e) {
+    console.error("[forwardEmail] Could not get original message subject:", e);
+  }
+
+  // Show confirmation dialog
+  const fwdSubject = originalSubject.startsWith("Fwd:") || originalSubject.startsWith("FW:") 
+    ? originalSubject 
+    : `Fwd: ${originalSubject}`;
+  const fwdBody = forwardComment || "[Original message will be included below]";
+  const confirmed = await confirmEmailSend("forward", forwardTo, fwdSubject, fwdBody, forwardCc, forwardBcc);
+  if (!confirmed) {
+    console.error("[forwardEmail] User cancelled the operation");
+    return "Forward cancelled by user.";
+  }
+
   const escapedComment = forwardComment ? escapeForAppleScript(forwardComment) : "";
   const toRecipients = parseRecipients(forwardTo);
   const ccRecipients = forwardCc ? parseRecipients(forwardCc) : [];
@@ -1538,6 +1674,49 @@ async function replyEmail(
   const useHtml = isHtml ?? detectHtml(replyBody);
 
   console.error(`[replyEmail] Replying to message ${messageId}, replyAll: ${replyAll}, isHtml: ${useHtml}`);
+
+  // Get original message details for confirmation dialog
+  const getOriginalScript = `
+    tell application "Microsoft Outlook"
+      set theMsg to message id ${messageId}
+      set origSender to ""
+      try
+        set senderObj to sender of theMsg
+        if class of senderObj is text then
+          set origSender to senderObj
+        else
+          try
+            set origSender to address of senderObj
+          on error
+            set origSender to name of senderObj
+          end try
+        end if
+      end try
+      set origSubject to subject of theMsg
+      return origSender & "<<<SEP>>>" & origSubject
+    end tell
+  `;
+  
+  let replyTo = "Unknown";
+  let originalSubject = "Unknown";
+  try {
+    const origResult = await runAppleScript(getOriginalScript);
+    const parts = origResult.split("<<<SEP>>>");
+    if (parts.length >= 2) {
+      replyTo = parts[0] || "Unknown";
+      originalSubject = parts[1] || "Unknown";
+    }
+  } catch (e) {
+    console.error("[replyEmail] Could not get original message details:", e);
+  }
+
+  // Show confirmation dialog
+  const replySubject = originalSubject.startsWith("Re:") ? originalSubject : `Re: ${originalSubject}`;
+  const confirmed = await confirmEmailSend("reply", replyTo, replySubject, replyBody);
+  if (!confirmed) {
+    console.error("[replyEmail] User cancelled the operation");
+    return "Reply cancelled by user.";
+  }
   console.error(`[replyEmail] Attachments: ${attachments ? JSON.stringify(attachments) : 'none'}`);
   console.error(`[replyEmail] Recipient options: ${recipientOptions ? JSON.stringify(recipientOptions) : 'none'}`);
 
@@ -1905,6 +2084,43 @@ async function emptyTrash(preview: boolean): Promise<EmptyTrashResult> {
     }
   } else {
     // Execute mode: permanently delete all items
+    // First get item count for confirmation dialog
+    const countScript = `
+      tell application "Microsoft Outlook"
+        set deletedFolder to deleted items
+        return count of messages of deletedFolder
+      end tell
+    `;
+    
+    let itemCount = 0;
+    try {
+      const countResult = await runAppleScript(countScript);
+      itemCount = parseInt(countResult, 10) || 0;
+    } catch (e) {
+      console.error("[emptyTrash] Could not get item count:", e);
+    }
+
+    if (itemCount === 0) {
+      return {
+        preview: false,
+        itemCount: 0,
+        deleted: 0,
+        message: "Deleted Items folder is already empty"
+      };
+    }
+
+    // Show confirmation dialog
+    const confirmed = await confirmEmptyTrash(itemCount);
+    if (!confirmed) {
+      console.error("[emptyTrash] User cancelled the operation");
+      return {
+        preview: false,
+        itemCount,
+        deleted: 0,
+        message: "Empty trash cancelled by user."
+      };
+    }
+
     const script = `
       tell application "Microsoft Outlook"
         try
