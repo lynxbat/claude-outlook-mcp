@@ -1,9 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { buildFolderRef, buildNestedFolderRef, escapeForAppleScript, parseRecipients, detectHtml } from "../../helpers";
+import { buildFolderRef, buildNestedFolderRef, escapeForAppleScript, parseRecipients, detectHtml, isInboxFolder, buildFolderSearchScript, INBOX_LOCALIZATIONS } from "../../helpers";
 
 describe("buildFolderRef", () => {
-  it("returns 'inbox' for Inbox folder", () => {
-    expect(buildFolderRef("Inbox")).toBe("inbox");
+  // NOTE: buildFolderRef no longer returns "inbox" for Inbox folder.
+  // This is intentional - the AppleScript "inbox" keyword often points to an empty
+  // local folder in localized Outlook installations. We always use mail folder references.
+  it("returns mail folder reference for Inbox folder (not inbox keyword)", () => {
+    expect(buildFolderRef("Inbox")).toBe('mail folder "Inbox"');
   });
 
   it("returns mail folder reference for other folders", () => {
@@ -17,8 +20,7 @@ describe("buildFolderRef", () => {
     expect(buildFolderRef("Work/Projects")).toBe('mail folder "Work/Projects"');
   });
 
-  it("is case-sensitive for Inbox", () => {
-    // Only exact "Inbox" should use inbox reference
+  it("treats all inbox variants the same", () => {
     expect(buildFolderRef("inbox")).toBe('mail folder "inbox"');
     expect(buildFolderRef("INBOX")).toBe('mail folder "INBOX"');
   });
@@ -29,8 +31,10 @@ describe("buildFolderRef", () => {
 });
 
 describe("buildNestedFolderRef", () => {
-  it("returns 'inbox' for Inbox folder", () => {
-    expect(buildNestedFolderRef("Inbox")).toBe("inbox");
+  // NOTE: buildNestedFolderRef no longer returns "inbox" for Inbox folder.
+  // This is intentional to support localized Outlook installations.
+  it("returns mail folder reference for Inbox folder (not inbox keyword)", () => {
+    expect(buildNestedFolderRef("Inbox")).toBe('mail folder "Inbox"');
   });
 
   it("returns mail folder reference for flat folders", () => {
@@ -167,5 +171,69 @@ describe("detectHtml", () => {
 
   it("handles empty string", () => {
     expect(detectHtml("")).toBe(false);
+  });
+});
+
+describe("isInboxFolder", () => {
+  it("recognizes English inbox", () => {
+    expect(isInboxFolder("Inbox")).toBe(true);
+    expect(isInboxFolder("inbox")).toBe(true);
+    expect(isInboxFolder("INBOX")).toBe(true);
+  });
+
+  it("recognizes German inbox", () => {
+    expect(isInboxFolder("Posteingang")).toBe(true);
+  });
+
+  it("recognizes French inbox", () => {
+    expect(isInboxFolder("Boîte de réception")).toBe(true);
+  });
+
+  it("recognizes Spanish inbox", () => {
+    expect(isInboxFolder("Bandeja de entrada")).toBe(true);
+  });
+
+  it("returns false for non-inbox folders", () => {
+    expect(isInboxFolder("Sent Items")).toBe(false);
+    expect(isInboxFolder("Archive")).toBe(false);
+    expect(isInboxFolder("Drafts")).toBe(false);
+  });
+});
+
+describe("buildFolderSearchScript", () => {
+  it("generates localization-aware search for Inbox", () => {
+    const script = buildFolderSearchScript("theFolder", "Inbox");
+    expect(script).toContain("Posteingang");
+    expect(script).toContain("Boîte de réception");
+    expect(script).toContain("set theFolder to");
+  });
+
+  it("generates localization-aware search for localized inbox names", () => {
+    const script = buildFolderSearchScript("myFolder", "Posteingang");
+    expect(script).toContain("Posteingang");
+    expect(script).toContain("set myFolder to");
+  });
+
+  it("generates direct reference for non-inbox folders", () => {
+    const script = buildFolderSearchScript("theFolder", "Archive");
+    expect(script).toBe('set theFolder to mail folder "Archive"');
+  });
+
+  it("generates nested reference for path folders", () => {
+    const script = buildFolderSearchScript("theFolder", "Work/Projects");
+    expect(script).toBe('set theFolder to mail folder "Projects" of mail folder "Work"');
+  });
+});
+
+describe("INBOX_LOCALIZATIONS", () => {
+  it("includes common languages", () => {
+    expect(INBOX_LOCALIZATIONS).toContain("Posteingang");  // German
+    expect(INBOX_LOCALIZATIONS).toContain("Boîte de réception");  // French
+    expect(INBOX_LOCALIZATIONS).toContain("Bandeja de entrada");  // Spanish
+    expect(INBOX_LOCALIZATIONS).toContain("Inbox");  // English
+  });
+
+  it("has Inbox listed last (to prefer localized folders with messages)", () => {
+    expect(INBOX_LOCALIZATIONS[INBOX_LOCALIZATIONS.length - 1]).toBe("Inbox");
   });
 });

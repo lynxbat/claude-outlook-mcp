@@ -89,25 +89,63 @@ export function parseEmailOutput(raw: string): ParsedEmail[] {
 }
 
 /**
+ * Common localized names for the Inbox folder across different languages.
+ * Used to identify when a user is requesting the inbox regardless of their locale.
+ * 
+ * NOTE: "Inbox" is listed LAST because in localized Outlook installations,
+ * there's often an empty local "Inbox" folder alongside the real localized inbox.
+ * By checking localized names first, we find the real inbox with messages.
+ */
+export const INBOX_LOCALIZATIONS = [
+  "Posteingang",     // German
+  "Boîte de réception", // French
+  "Bandeja de entrada", // Spanish
+  "Posta in arrivo", // Italian
+  "Postvak IN",      // Dutch
+  "Caixa de Entrada", // Portuguese
+  "Indbakke",        // Danish
+  "Innboks",         // Norwegian
+  "Skrzynka odbiorcza", // Polish
+  "Входящие",        // Russian
+  "受信トレイ",       // Japanese
+  "收件箱",          // Chinese
+  "Inbox",           // English (checked last - often empty local folder)
+];
+
+/**
+ * Check if a folder name refers to the inbox (in any supported language)
+ */
+export function isInboxFolder(folder: string): boolean {
+  return INBOX_LOCALIZATIONS.some(
+    name => name.toLowerCase() === folder.toLowerCase()
+  );
+}
+
+/**
  * Build AppleScript folder reference
- * "Inbox" -> inbox (built-in reference)
+ * 
+ * NOTE: The AppleScript "inbox" keyword often points to an empty local folder
+ * instead of the actual Exchange inbox in localized Outlook installations.
+ * We always use mail folder references with localization fallback to avoid this issue.
+ * 
+ * "Inbox" -> searches for inbox by common localized names
  * Other folders -> mail folder "Name" (named reference)
  */
 export function buildFolderRef(folder: string): string {
-  return folder === "Inbox" ? "inbox" : `mail folder "${folder}"`;
+  // Always use named reference - the "inbox" keyword is unreliable
+  // with Exchange accounts in localized Outlook installations
+  return `mail folder "${folder}"`;
 }
 
 /**
  * Build AppleScript folder reference for nested paths
- * "Inbox" -> inbox
+ * "Inbox" -> mail folder "Inbox" (or localized equivalent)
  * "Reports" -> mail folder "Reports"
  * "Work/Reports" -> mail folder "Reports" of mail folder "Work"
+ * 
+ * NOTE: We no longer use the "inbox" keyword as it's unreliable with Exchange accounts.
  */
 export function buildNestedFolderRef(path: string): string {
-  if (path === "Inbox") {
-    return "inbox";
-  }
-
   const parts = path.split("/");
 
   if (parts.length === 1) {
@@ -121,6 +159,61 @@ export function buildNestedFolderRef(path: string): string {
     ref += ` of mail folder "${parts[i]}"`;
   }
   return ref;
+}
+
+/**
+ * Generate AppleScript code to find a folder, with fallback for localized inbox names.
+ * This handles the case where "Inbox" might be called "Posteingang", "Boîte de réception", etc.
+ * 
+ * @param folderVar - The AppleScript variable name to store the found folder
+ * @param folderName - The folder name requested by the user
+ * @returns AppleScript code that sets folderVar to the correct folder
+ */
+export function buildFolderSearchScript(folderVar: string, folderName: string): string {
+  // Check if user is requesting inbox (in any language)
+  if (isInboxFolder(folderName)) {
+    // Try each localized inbox name in order (localized names first, "Inbox" last)
+    // This ensures we find the real inbox with messages, not the empty local "Inbox"
+    const folderSearchBlocks = INBOX_LOCALIZATIONS.map(name => `
+        if ${folderVar} is null then
+          repeat with aFolder in allFolders
+            if name of aFolder is "${name}" then
+              -- Only use this folder if it has messages (skip empty local folders)
+              try
+                if (count of messages of aFolder) > 0 then
+                  set ${folderVar} to aFolder
+                  exit repeat
+                end if
+              end try
+            end if
+          end repeat
+        end if`
+    ).join("\n");
+    
+    return `
+      -- Find inbox folder (handles localization)
+      set ${folderVar} to null
+      set allFolders to mail folders
+      ${folderSearchBlocks}
+      
+      -- If still not found, try any folder with an inbox-like name (even if empty)
+      if ${folderVar} is null then
+        repeat with aFolder in allFolders
+          set folderName to name of aFolder
+          if folderName is "Inbox" or folderName is "Posteingang" or folderName is "Boîte de réception" then
+            set ${folderVar} to aFolder
+            exit repeat
+          end if
+        end repeat
+      end if
+      
+      if ${folderVar} is null then error "Could not find inbox folder"
+    `;
+  }
+  
+  // For non-inbox folders, use direct reference
+  const nestedRef = buildNestedFolderRef(folderName);
+  return `set ${folderVar} to ${nestedRef}`;
 }
 
 /**
