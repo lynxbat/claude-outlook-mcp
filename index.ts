@@ -7,7 +7,7 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { runAppleScript } from 'run-applescript';
-import { parseEmailOutput, buildFolderRef, buildNestedFolderRef, escapeForAppleScript, parseRecipients, detectHtml } from './helpers';
+import { parseEmailOutput, buildFolderRef, buildNestedFolderRef, buildFolderSearchScript, isInboxFolder, escapeForAppleScript, parseRecipients, detectHtml } from './helpers';
 
 // Re-export helpers for testing
 export { parseEmailOutput, buildFolderRef, buildNestedFolderRef, escapeForAppleScript, parseRecipients } from './helpers';
@@ -386,42 +386,73 @@ async function getUnreadEmails(folder: string = "Inbox", limit: number = 10): Pr
   console.error(`[getUnreadEmails] Getting unread emails from folder: ${folder}, limit: ${limit}`);
   await checkOutlookAccess();
   
-  const folderPath = folder === "Inbox" ? "inbox" : folder;
+  // Use localization-aware folder search for inbox, direct reference for others
+  const folderSetup = buildFolderSearchScript("theFolder", folder);
+  
   const script = `
     tell application "Microsoft Outlook"
       try
-        set theFolder to ${folderPath} -- Use the specified folder or default to inbox
-        set unreadMessages to {}
+        ${folderSetup}
+        set messageOutput to ""
         set allMessages to messages of theFolder
-        set i to 0
+        set foundCount to 0
         
         repeat with theMessage in allMessages
-          if read status of theMessage is false then
-            set i to i + 1
-            set msgData to {subject:subject of theMessage, sender:sender of theMessage, ¬
-                       date:time sent of theMessage, id:id of theMessage}
-            
-            -- Try to get content
+          if foundCount >= ${limit} then exit repeat
+          
+          if is read of theMessage is false then
             try
-              set msgContent to content of theMessage
-              if length of msgContent > 500 then
-                set msgContent to (text 1 thru 500 of msgContent) & "..."
-              end if
-              set msgData to msgData & {content:msgContent}
+              set msgId to id of theMessage as string
+              set msgSubject to subject of theMessage
+              
+              -- Get sender info
+              set msgSender to "Unknown"
+              try
+                set senderObj to sender of theMessage
+                if class of senderObj is text then
+                  set msgSender to senderObj
+                else
+                  try
+                    set msgSender to address of senderObj
+                  on error
+                    try
+                      set msgSender to name of senderObj
+                    on error
+                      set msgSender to senderObj as text
+                    end try
+                  end try
+                end if
+              end try
+              
+              set msgDate to time sent of theMessage as string
+              
+              -- Get content (truncated)
+              set msgContent to ""
+              try
+                set msgContent to plain text content of theMessage
+                if length of msgContent > 500 then
+                  set msgContent to text 1 thru 500 of msgContent
+                end if
+              on error
+                try
+                  set msgContent to content of theMessage
+                  if length of msgContent > 500 then
+                    set msgContent to text 1 thru 500 of msgContent
+                  end if
+                on error
+                  set msgContent to "[Content not available]"
+                end try
+              end try
+              
+              set messageOutput to messageOutput & "<<<MSG>>>" & msgSubject & "<<<ID>>>" & msgId & "<<<FROM>>>" & msgSender & "<<<DATE>>>" & msgDate & "<<<CONTENT>>>" & msgContent & "<<<ENDMSG>>>"
+              set foundCount to foundCount + 1
             on error
-              set msgData to msgData & {content:"[Content not available]"}
+              -- Skip problematic messages
             end try
-            
-            set end of unreadMessages to msgData
-            
-            -- Stop if we've reached the limit
-            if i >= ${limit} then
-              exit repeat
-            end if
           end if
         end repeat
         
-        return unreadMessages
+        return messageOutput
       on error errMsg
         return "Error: " & errMsg
       end try
@@ -432,45 +463,12 @@ async function getUnreadEmails(folder: string = "Inbox", limit: number = 10): Pr
     const result = await runAppleScript(script);
     console.error(`[getUnreadEmails] Raw result length: ${result.length}`);
     
-    // Parse the results (AppleScript returns records as text)
     if (result.startsWith("Error:")) {
       throw new Error(result);
     }
     
-    // Simple parsing for demonstration
-    // In a production environment, you'd want more robust parsing
-    const emails = [];
-    const matches = result.match(/\{([^}]+)\}/g);
-    
-    if (matches && matches.length > 0) {
-      for (const match of matches) {
-        try {
-          const props = match.substring(1, match.length - 1).split(',');
-          const email: any = {};
-          
-          props.forEach(prop => {
-            const parts = prop.split(':');
-            if (parts.length >= 2) {
-              const key = parts[0].trim();
-              const value = parts.slice(1).join(':').trim();
-              email[key] = value;
-            }
-          });
-          
-          if (email.subject || email.sender) {
-            emails.push({
-              subject: email.subject || "No subject",
-              sender: email.sender || "Unknown sender",
-              dateSent: email.date || new Date().toString(),
-              content: email.content || "[Content not available]",
-              id: email.id || ""
-            });
-          }
-        } catch (parseError) {
-          console.error('[getUnreadEmails] Error parsing email match:', parseError);
-        }
-      }
-    }
+    // Parse using the helper function (consistent with other email functions)
+    const emails = parseEmailOutput(result);
     
     console.error(`[getUnreadEmails] Found ${emails.length} unread emails`);
     return emails;
@@ -485,7 +483,8 @@ async function searchEmails(searchTerm: string, folder: string = "Inbox", limit:
   console.error(`[searchEmails] Searching for "${searchTerm}" in folder: ${folder}, limit: ${limit}, startDate: ${startDate}, endDate: ${endDate}`);
   await checkOutlookAccess();
 
-  const folderRef = buildNestedFolderRef(folder);
+  // Use localization-aware folder search for inbox, direct reference for others
+  const folderSetup = buildFolderSearchScript("theFolder", folder);
 
   // Build date filter AppleScript code
   let dateFilterSetup = "";
@@ -521,13 +520,11 @@ async function searchEmails(searchTerm: string, folder: string = "Inbox", limit:
   const script = `
     tell application "Microsoft Outlook"
       try
+        ${folderSetup}
         set searchString to "${searchTerm.replace(/"/g, '\\"')}"
         set messageOutput to ""
         set totalFound to 0
         ${dateFilterSetup}
-
-        -- Search only the specified folder
-        set theFolder to ${folderRef}
         set folderMsgs to messages of theFolder
 
         repeat with theMsg in folderMsgs
@@ -1965,12 +1962,13 @@ async function countEmails(folder: string = "Inbox"): Promise<string> {
   console.error(`[countEmails] Counting emails in folder: ${folder}`);
   await checkOutlookAccess();
 
-  const folderRef = buildNestedFolderRef(folder);
+  // Use localization-aware folder search for inbox, direct reference for others
+  const folderSetup = buildFolderSearchScript("theFolder", folder);
 
   const script = `
     tell application "Microsoft Outlook"
       try
-        set theFolder to ${folderRef}
+        ${folderSetup}
         set totalCount to count of messages of theFolder
         set unreadCount to count of (messages of theFolder whose is read is false)
         return "Total: " & totalCount & ", Unread: " & unreadCount
@@ -2038,7 +2036,8 @@ async function readEmails(folder: string = "Inbox", limit: number = 10, startDat
     console.error(`[readEmails] Reading emails from folder: ${folder}, limit: ${limit}, startDate: ${startDate}, endDate: ${endDate}`);
     await checkOutlookAccess();
 
-    const folderRef = buildNestedFolderRef(folder);
+    // Use localization-aware folder search for inbox, direct reference for others
+    const folderSetup = buildFolderSearchScript("theFolder", folder);
 
     // Build date filter AppleScript code
     let dateFilterSetup = "";
@@ -2077,7 +2076,7 @@ async function readEmails(folder: string = "Inbox", limit: number = 10, startDat
     const script = `
       tell application "Microsoft Outlook"
         try
-          set theFolder to ${folderRef}
+          ${folderSetup}
           set allMessages to messages of theFolder
           set msgCount to count of allMessages
           ${dateFilterSetup}
