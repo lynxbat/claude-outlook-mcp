@@ -94,7 +94,12 @@ export function parseEmailOutput(raw: string): ParsedEmail[] {
  * Other folders -> mail folder "Name" (named reference)
  */
 export function buildFolderRef(folder: string): string {
-  return folder === "Inbox" ? "inbox" : `mail folder "${folder}"`;
+  if (folder === "Inbox") return "inbox";
+  if (folder === "Sent Items" || folder === "Sent") return "sent items";
+  if (folder === "Drafts") return "drafts";
+  if (folder === "Deleted Items") return "deleted items";
+  if (folder === "Junk Email" || folder === "Junk") return "junk mail folder";
+  return `mail folder "${folder}"`;
 }
 
 /**
@@ -106,6 +111,18 @@ export function buildFolderRef(folder: string): string {
 export function buildNestedFolderRef(path: string): string {
   if (path === "Inbox") {
     return "inbox";
+  }
+  if (path === "Sent Items" || path === "Sent") {
+    return "sent items";
+  }
+  if (path === "Drafts") {
+    return "drafts";
+  }
+  if (path === "Deleted Items") {
+    return "deleted items";
+  }
+  if (path === "Junk Email" || path === "Junk") {
+    return "junk mail folder";
   }
 
   const parts = path.split("/");
