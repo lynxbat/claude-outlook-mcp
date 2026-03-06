@@ -34,7 +34,7 @@ const OUTLOOK_MAIL_TOOL: Tool = {
     properties: {
       operation: {
         type: "string",
-        description: "Operation to perform: 'unread', 'search', 'send', 'draft', 'reply', 'forward', 'folders', 'read', 'create_folder', 'move_email', 'rename_folder', 'delete_folder', 'count', 'save_attachments', 'list_folders', or 'empty_trash'",
+        description: "Operation to perform: 'unread', 'search', 'send', 'draft' (new email, reply draft via replyToMessageId, or forward draft via forwardMessageId), 'reply', 'forward', 'folders', 'read', 'create_folder', 'move_email', 'rename_folder', 'delete_folder', 'count', 'save_attachments', 'list_folders', or 'empty_trash'",
         enum: ["unread", "search", "send", "draft", "reply", "forward", "folders", "read", "create_folder", "move_email", "rename_folder", "delete_folder", "count", "save_attachments", "list_folders", "empty_trash"]
       },
       folder: {
@@ -167,6 +167,10 @@ const OUTLOOK_MAIL_TOOL: Tool = {
       replyToMessageId: {
         type: "string",
         description: "Message ID to reply to (optional for draft operation). When provided, creates a reply draft with proper threading instead of a new email."
+      },
+      forwardMessageId: {
+        type: "string",
+        description: "Message ID to forward as draft (optional for draft operation). When provided with forwardTo, creates a forward draft instead of sending."
       },
       targetFolder: {
         type: "string",
@@ -1419,7 +1423,7 @@ async function moveEmail(messageId: string, targetFolder: string): Promise<strin
 }
 
 // Function to forward an email
-async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: string, forwardBcc?: string, forwardComment?: string, attachments?: string[], includeOriginalAttachments: boolean = true): Promise<string> {
+async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: string, forwardBcc?: string, forwardComment?: string, attachments?: string[], includeOriginalAttachments: boolean = true, draftOnly: boolean = false): Promise<string> {
   console.error(`[forwardEmail] Forwarding message ${messageId} to: ${forwardTo}`);
   console.error(`[forwardEmail] New attachments: ${attachments ? JSON.stringify(attachments) : 'none'}`);
   console.error(`[forwardEmail] Include original attachments: ${includeOriginalAttachments}`);
@@ -1496,10 +1500,12 @@ async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: st
         set content of fwdMsg to "${escapedComment}" & return & return & currentContent
         ` : ''}
 
-        -- Send the forward
-        send fwdMsg
+        ${draftOnly ? `-- Open as draft for review
+        open fwdMsg
+        activate` : `-- Send the forward
+        send fwdMsg`}
 
-        return "Forward queued for delivery to ${escapeForAppleScript(forwardTo)}${processedAttachments.length > 0 ? ` with ${processedAttachments.length} new attachment(s)` : ''}${!includeOriginalAttachments ? ' (original attachments removed)' : ''}"
+        return "${draftOnly ? `Forward draft created and opened in Outlook for ${escapeForAppleScript(forwardTo)}` : `Forward queued for delivery to ${escapeForAppleScript(forwardTo)}`}${processedAttachments.length > 0 ? ` with ${processedAttachments.length} new attachment(s)` : ''}${!includeOriginalAttachments ? ' (original attachments removed)' : ''}"
       on error errMsg
         return "Error: " & errMsg
       end try
@@ -3065,6 +3071,7 @@ function isMailArgs(args: unknown): args is {
   removeCc?: string;
   removeBcc?: string;
   replyToMessageId?: string;
+  forwardMessageId?: string;
   preview?: boolean;
   confirm?: boolean;
 } {
@@ -3085,8 +3092,10 @@ function isMailArgs(args: unknown): args is {
       if (!(args as any).to || !(args as any).subject || !(args as any).body) return false;
       break;
     case "draft":
-      // Either a new draft (to, subject, body) or a reply draft (replyToMessageId, body)
-      if ((args as any).replyToMessageId) {
+      // Either a forward draft (forwardMessageId), reply draft (replyToMessageId), or new draft (to, subject, body)
+      if ((args as any).forwardMessageId) {
+        if (!(args as any).forwardTo) return false;
+      } else if ((args as any).replyToMessageId) {
         if (!(args as any).body) return false;
       } else {
         if (!(args as any).to || !(args as any).subject || !(args as any).body) return false;
@@ -3295,14 +3304,36 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
 
           case "draft": {
-            // Either a new draft (to, subject, body) or a reply draft (replyToMessageId, body)
-            if (args.replyToMessageId) {
+            // Either a forward draft (forwardMessageId), reply draft (replyToMessageId), or new draft (to, subject, body)
+            if (args.forwardMessageId) {
+              if (!args.forwardTo) {
+                throw new Error("forwardTo is required when using forwardMessageId for forward drafts");
+              }
+
+              console.error(`[CallTool] Create forward draft for message ${args.forwardMessageId} to: ${args.forwardTo}`);
+
+              const forwardDraftResult = await forwardEmail(
+                args.forwardMessageId,
+                args.forwardTo,
+                args.forwardCc,
+                args.forwardBcc,
+                args.forwardComment,
+                args.attachments,
+                args.includeOriginalAttachments ?? true,
+                true // draftOnly
+              );
+
+              return {
+                content: [{ type: "text", text: forwardDraftResult }],
+                isError: forwardDraftResult.startsWith("Error:")
+              };
+            } else if (args.replyToMessageId) {
               if (!args.body) {
                 throw new Error("Body is required for reply draft operation");
               }
             } else {
               if (!args.to || !args.subject || !args.body) {
-                throw new Error("Recipient (to), subject, and body are required for draft operation (or use replyToMessageId for reply drafts)");
+                throw new Error("Recipient (to), subject, and body are required for draft operation (or use replyToMessageId for reply drafts, or forwardMessageId for forward drafts)");
               }
             }
 
