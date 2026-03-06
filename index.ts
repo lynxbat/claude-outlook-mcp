@@ -1497,7 +1497,15 @@ async function forwardEmail(messageId: string, forwardTo: string, forwardCc?: st
         -- Add comment above forwarded content if provided
         ${forwardComment ? `
         set currentContent to content of fwdMsg
-        set content of fwdMsg to "${escapedComment}" & return & return & currentContent
+        -- Strip CDATA wrapper if present (Outlook wraps forwarded content in CDATA)
+        if currentContent starts with "<![CDATA[" then
+          set currentContent to text 10 thru -1 of currentContent
+          if currentContent ends with "]]>" then
+            set currentContent to text 1 thru -4 of currentContent
+          end if
+        end if
+        set commentHtml to "<div style=\\"font-family: Aptos, Arial, sans-serif; font-size: 11pt;\\">${escapedComment}</div><br>"
+        set content of fwdMsg to commentHtml & currentContent
         ` : ''}
 
         ${draftOnly ? `-- Open as draft for review
